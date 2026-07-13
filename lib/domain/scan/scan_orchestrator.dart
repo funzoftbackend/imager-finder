@@ -3,14 +3,12 @@ import 'dart:isolate';
 import 'dart:math';
 
 import 'package:drift/drift.dart';
-import 'package:photo_manager/photo_manager.dart';
 
 import '../../core/adaptive_concurrency.dart';
 import '../../data/db/app_database.dart';
 import '../../data/media/media_catalog.dart';
 import '../../data/native/native_hash_client.dart';
 import '../models/models.dart';
-import 'dart_image_hash.dart';
 import 'diff_engine.dart';
 import 'groupers.dart';
 import 'bk_tree.dart';
@@ -21,10 +19,6 @@ import 'scan_timing.dart';
 Future<List<({List<String> mediaIds, int maxDistance})>>
     runSimilarGroupingInIsolate(SimilarGroupIsolateArgs args) {
   return Isolate.run(() => groupSimilarInIsolate(args));
-}
-
-Future<List<String?>> runDHashBatchInIsolate(List<Uint8List?> batch) {
-  return Isolate.run(() => dHashBatchInIsolate(batch));
 }
 
 /// Staged scan pipeline: catalog → diff → exact → similar → persist.
@@ -95,7 +89,7 @@ class ScanOrchestrator {
 
     timing.end(
       'catalog',
-      detail: 'photos=${assets.length}',
+      detail: 'photos=${assets.length} source=native_or_fallback',
     );
     yield ScanProgress(
       phase: ScanPhase.catalog,
@@ -229,6 +223,7 @@ class ScanOrchestrator {
           'photos=${exactGroups.fold<int>(0, (s, g) => s + g.mediaIds.length)}',
     );
 
+    // Exact results are persisted — UI can show duplicates while similar runs.
     yield ScanProgress(
       phase: ScanPhase.exact,
       processed: needContentHash.length,
@@ -237,27 +232,30 @@ class ScanOrchestrator {
       message: 'Found ${exactGroups.length} exact duplicate groups',
     );
 
-    // —— Phase 4: Similar (thumbnail → batched Dart dHash off UI) ——
+    // —— Phase 4: Similar via native thumbnail dHash batch ——
     timing.begin('similar_hash');
     allPhotos = await _db.getAllPhotos();
-    final needDHash = allPhotos;
+    final needDHash = forceFullSimilar
+        ? allPhotos
+        : allPhotos
+            .where((p) => p.dHash == null || p.dHash!.isEmpty)
+            .toList();
 
     yield ScanProgress(
       phase: ScanPhase.similar,
       processed: 0,
       total: needDHash.length,
       exactGroups: exactGroups.length,
-      message: 'Computing perceptual hashes for ${needDHash.length} photos…',
+      message: needDHash.isEmpty
+          ? 'Similar fingerprints up to date'
+          : 'Scanning similar photos…',
     );
 
     final similarStarted = DateTime.now();
     var similarDone = 0;
     var similarFailed = 0;
     String? lastError;
-
-    // Thumbnail fetch stays light; hash decode runs in one isolate per chunk.
-    final thumbConcurrency = min(2, concurrency);
-    const chunkSize = 40;
+    const chunkSize = 250;
     const milestoneEvery = 500;
     var nextMilestone = milestoneEvery;
 
@@ -267,40 +265,27 @@ class ScanOrchestrator {
         i,
         min(i + chunkSize, needDHash.length),
       );
+      final uris = [for (final p in chunk) p.uri];
 
-      final thumbBytes = List<Uint8List?>.filled(chunk.length, null);
-      await _mapLimited(
-        List.generate(chunk.length, (index) => index),
-        concurrency: thumbConcurrency,
-        run: (index) async {
-          try {
-            thumbBytes[index] = await _loadThumbnailBytes(chunk[index]);
-          } catch (e) {
-            lastError ??= e.toString();
-          }
-        },
-      );
-
-      List<String?> hashes;
+      Map<String, String> byUri;
       try {
-        hashes = await runDHashBatchInIsolate(thumbBytes);
+        byUri = await _hash.computeDHashBatch(uris);
       } catch (e) {
-        // Fallback: hash on this isolate one-by-one if isolate spawn fails.
-        hashes = DartImageHash.dHashBatch(thumbBytes);
         lastError ??= e.toString();
+        byUri = const {};
       }
 
       final chunkResults = <({String mediaId, String dHash})>[];
-      for (var j = 0; j < chunk.length; j++) {
-        final hashed = hashes[j];
+      for (final photo in chunk) {
+        final hashed = byUri[photo.uri];
         if (hashed != null && hashed.isNotEmpty) {
-          chunkResults.add((mediaId: chunk[j].mediaId, dHash: hashed));
+          chunkResults.add((mediaId: photo.mediaId, dHash: hashed));
           continue;
         }
-        // Thumbnail path failed — try native URI decode as last resort.
+        // Rare fallback: single native decode.
         try {
-          final dHash = await _hash.computeDHash(chunk[j].uri);
-          chunkResults.add((mediaId: chunk[j].mediaId, dHash: dHash));
+          final dHash = await _hash.computeDHash(photo.uri);
+          chunkResults.add((mediaId: photo.mediaId, dHash: dHash));
         } catch (e) {
           similarFailed++;
           lastError ??= e.toString();
@@ -324,12 +309,11 @@ class ScanOrchestrator {
         );
         nextMilestone += milestoneEvery;
       }
-      // Yield so the UI can paint between chunks (prevents ANR during hashing).
       await Future<void>.delayed(Duration.zero);
       yield ScanProgress(
         phase: ScanPhase.similar,
         processed: similarDone,
-        total: needDHash.length,
+        total: needDHash.isEmpty ? 1 : needDHash.length,
         exactGroups: exactGroups.length,
         message: similarFailed > 0
             ? 'Scanning similar photos… ($similarFailed failed)'
@@ -370,12 +354,14 @@ class ScanOrchestrator {
     final mediaIds = <String>[];
     final hashInts = <int>[];
     final contentHashes = <String?>[];
+    final createdMsList = <int>[];
     for (final p in allPhotos) {
       final dHash = p.dHash;
       if (dHash == null || dHash.isEmpty) continue;
       mediaIds.add(p.mediaId);
       hashInts.add(BkTree.parseHash(dHash));
       contentHashes.add(p.contentHash);
+      createdMsList.add(p.createdMs > 0 ? p.createdMs : p.modifiedMs);
     }
     timing.end(
       'similar_group_prepare',
@@ -388,7 +374,9 @@ class ScanOrchestrator {
       mediaIds: mediaIds,
       hashes: hashInts,
       contentHashes: contentHashes,
+      createdMs: createdMsList,
       threshold: groupThreshold,
+      maxTimeDeltaMs: kDefaultSimilarMaxTimeDeltaMs,
     );
 
     late final List<({List<String> mediaIds, int maxDistance})> similarGroups;
@@ -500,15 +488,6 @@ class ScanOrchestrator {
           }
         });
     return controller.stream;
-  }
-
-  Future<Uint8List?> _loadThumbnailBytes(Photo photo) async {
-    final entity = await AssetEntity.fromId(photo.mediaId);
-    if (entity == null) return null;
-    return entity.thumbnailDataWithSize(
-      const ThumbnailSize(64, 64),
-      quality: 70,
-    );
   }
 
   Future<void> _mapLimited<T>(

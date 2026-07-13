@@ -32,7 +32,7 @@ class InfoTab extends StatelessWidget {
             icon: Icons.bolt_rounded,
             title: 'Fast first scan',
             body:
-                'Reads your gallery first, then finds exact duplicates and similar photos on device.',
+                'Reads your gallery first, then finds exact duplicates and similar photos on device. Similar matches only link photos taken within 2 hours, using strict look-alike clustering (no giant mixed groups).',
           ),
           const SizedBox(height: 12),
           _InfoCard(

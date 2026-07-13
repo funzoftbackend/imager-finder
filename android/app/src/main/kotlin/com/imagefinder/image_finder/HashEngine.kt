@@ -98,6 +98,9 @@ class HashEngine(private val context: Context) {
         }
     }
 
+    /** Public entry for [ScanEngine] system-thumbnail path. */
+    fun dHashFromBitmapPublic(bitmap: Bitmap): String = dHashFromBitmap(bitmap)
+
     private fun dHashFromBitmap(bitmap: Bitmap): String {
         val scaled = Bitmap.createScaledBitmap(bitmap, 9, 8, true)
         try {

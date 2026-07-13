@@ -8,16 +8,50 @@ import java.util.concurrent.Executors
 class MainActivity : FlutterActivity() {
     private val channelName = "com.imagefinder.image_finder/hash_engine"
     private val executor = Executors.newFixedThreadPool(
-        Runtime.getRuntime().availableProcessors().coerceAtLeast(2)
+        Runtime.getRuntime().availableProcessors().coerceAtLeast(2),
     )
+
+    private lateinit var hashEngine: HashEngine
+    private lateinit var scanEngine: ScanEngine
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        val engine = HashEngine(applicationContext)
+        hashEngine = HashEngine(applicationContext)
+        scanEngine = ScanEngine(applicationContext, hashEngine)
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "catalogImages" -> {
+                        executor.execute {
+                            try {
+                                val rows = scanEngine.catalogImages()
+                                runOnUiThread { result.success(rows) }
+                            } catch (e: Exception) {
+                                runOnUiThread {
+                                    result.error("CATALOG", e.message, null)
+                                }
+                            }
+                        }
+                    }
+                    "computeDHashBatch" -> {
+                        @Suppress("UNCHECKED_CAST")
+                        val uris = call.argument<List<String>>("uris")
+                        if (uris == null) {
+                            result.error("ARG", "uris is required", null)
+                            return@setMethodCallHandler
+                        }
+                        executor.execute {
+                            try {
+                                val rows = scanEngine.computeDHashBatch(uris)
+                                runOnUiThread { result.success(rows) }
+                            } catch (e: Exception) {
+                                runOnUiThread {
+                                    result.error("DHASH_BATCH", e.message, null)
+                                }
+                            }
+                        }
+                    }
                     "computeContentHash" -> {
                         val uri = call.argument<String>("uri")
                         if (uri.isNullOrBlank()) {
@@ -26,7 +60,7 @@ class MainActivity : FlutterActivity() {
                         }
                         executor.execute {
                             try {
-                                val hash = engine.computeContentHash(uri)
+                                val hash = hashEngine.computeContentHash(uri)
                                 runOnUiThread { result.success(hash) }
                             } catch (e: Exception) {
                                 runOnUiThread { result.error("HASH", e.message, null) }
@@ -42,7 +76,7 @@ class MainActivity : FlutterActivity() {
                         executor.execute {
                             try {
                                 val target = call.argument<Int>("targetSize") ?: 9
-                                val hash = engine.computeDHash(uri, target)
+                                val hash = hashEngine.computeDHash(uri, target)
                                 runOnUiThread { result.success(hash) }
                             } catch (e: Exception) {
                                 runOnUiThread { result.error("DHASH", e.message, null) }
@@ -64,7 +98,7 @@ class MainActivity : FlutterActivity() {
                         }
                         executor.execute {
                             try {
-                                val hash = engine.computeDHashFromBytes(bytes)
+                                val hash = hashEngine.computeDHashFromBytes(bytes)
                                 runOnUiThread { result.success(hash) }
                             } catch (e: Exception) {
                                 runOnUiThread { result.error("DHASH", e.message, null) }
@@ -80,7 +114,7 @@ class MainActivity : FlutterActivity() {
                         executor.execute {
                             try {
                                 val target = call.argument<Int>("targetSize") ?: 32
-                                val hash = engine.computePHash(uri, target)
+                                val hash = hashEngine.computePHash(uri, target)
                                 runOnUiThread { result.success(hash) }
                             } catch (e: Exception) {
                                 runOnUiThread { result.error("PHASH", e.message, null) }
@@ -95,7 +129,7 @@ class MainActivity : FlutterActivity() {
                         }
                         executor.execute {
                             try {
-                                val hash = engine.computePHashFromBytes(bytes)
+                                val hash = hashEngine.computePHashFromBytes(bytes)
                                 runOnUiThread { result.success(hash) }
                             } catch (e: Exception) {
                                 runOnUiThread { result.error("PHASH", e.message, null) }
@@ -108,6 +142,9 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        if (::scanEngine.isInitialized) {
+            scanEngine.shutdown()
+        }
         executor.shutdownNow()
         super.onDestroy()
     }

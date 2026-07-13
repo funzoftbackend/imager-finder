@@ -24,6 +24,19 @@ void main() {
       expect(BkTree.hamming(7, 0), 3);
       expect(BkTree.hamming(3, 0), 2);
     });
+
+    test('parseHash accepts unsigned 64-bit decimals from native', () {
+      // Value that fails int.parse on 64-bit signed limit.
+      const raw = '17430056384809778366';
+      final hash = BkTree.parseHash(raw);
+      expect(hash, isNot(0));
+      expect(BkTree.hamming(hash, hash), 0);
+      // Round-trip bit pattern via unsigned string form.
+      final again = BkTree.parseHash(
+        (BigInt.from(hash).toUnsigned(64)).toString(),
+      );
+      expect(again, hash);
+    });
   });
 
   group('DiffEngine', () {

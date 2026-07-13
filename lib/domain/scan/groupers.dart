@@ -3,11 +3,21 @@ import 'package:collection/collection.dart';
 import '../../data/db/app_database.dart';
 import 'bk_tree.dart';
 
+/// Default: only link similar photos taken within 2 hours.
+const int kDefaultSimilarMaxTimeDeltaMs = 2 * 60 * 60 * 1000;
+
+/// Stricter Hamming cutoff (was 12 — too loose with transitive merge).
+const int kDefaultSimilarThreshold = 6;
+
+/// Safety cap for a single similar group (pathological thumb hubs).
+const int kDefaultSimilarMaxGroupSize = 40;
+
 /// Lightweight transferable record for isolate-based similar grouping.
 typedef SimilarHashPayload = ({
   String mediaId,
   String dHash,
   String? contentHash,
+  int createdMs,
 });
 
 /// Compact isolate args — ints parse once on the caller side.
@@ -15,7 +25,9 @@ typedef SimilarGroupIsolateArgs = ({
   List<String> mediaIds,
   List<int> hashes,
   List<String?> contentHashes,
+  List<int> createdMs,
   int threshold,
+  int maxTimeDeltaMs,
 });
 
 class ExactGrouper {
@@ -62,13 +74,24 @@ class ExactGrouper {
 }
 
 class SimilarGrouper {
-  SimilarGrouper({this.threshold = 12, this.confirmThreshold = 14});
+  SimilarGrouper({
+    this.threshold = kDefaultSimilarThreshold,
+    this.confirmThreshold = 14,
+    this.maxTimeDeltaMs = kDefaultSimilarMaxTimeDeltaMs,
+    this.maxGroupSize = kDefaultSimilarMaxGroupSize,
+  });
 
   /// Hamming distance for dHash matches (0 identical … 64 opposite).
   final int threshold;
 
   /// Reserved for optional pHash confirmation (currently unused on scan path).
   final int confirmThreshold;
+
+  /// Max |captureTimeA - captureTimeB| to allow a similar link.
+  final int maxTimeDeltaMs;
+
+  /// Max photos in one similar group.
+  final int maxGroupSize;
 
   List<({List<String> mediaIds, int maxDistance})> group(
     List<Photo> photos, {
@@ -81,6 +104,7 @@ class SimilarGrouper {
             mediaId: p.mediaId,
             dHash: p.dHash!,
             contentHash: p.contentHash,
+            createdMs: p.createdMs > 0 ? p.createdMs : p.modifiedMs,
           ),
     ]);
   }
@@ -95,72 +119,40 @@ class SimilarGrouper {
     final mediaIds = <String>[];
     final hashes = <int>[];
     final contentHashes = <String?>[];
+    final createdMs = <int>[];
     for (final e in entries) {
       mediaIds.add(e.mediaId);
       hashes.add(BkTree.parseHash(e.dHash));
       contentHashes.add(e.contentHash);
+      createdMs.add(e.createdMs);
     }
 
     return groupFromParsed(
       mediaIds: mediaIds,
       hashes: hashes,
       contentHashes: contentHashes,
+      createdMs: createdMs,
       threshold: threshold,
+      maxTimeDeltaMs: maxTimeDeltaMs,
+      maxGroupSize: maxGroupSize,
     );
   }
 
-  /// Fast similar grouping:
-  /// 1) exact dHash map
-  /// 2) 8×8-bit LSH bands for near matches (avoids BK-tree O(n²) blow-up)
-  /// 3) Hamming verify + union-find
-  ///
-  /// BK-tree with radius 12 barely prunes on 64-bit hashes, so ~3k photos
-  /// felt "stuck" for minutes on the grouping step.
+  /// Fast similar grouping (no transitive mega-groups):
+  /// 1) LSH candidate edges with Hamming ≤ threshold and 2h window
+  /// 2) Center-star clusters with diameter ≤ threshold (no long chains)
+  /// 3) Cap group size
   static List<({List<String> mediaIds, int maxDistance})> groupFromParsed({
     required List<String> mediaIds,
     required List<int> hashes,
     required List<String?> contentHashes,
+    required List<int> createdMs,
     required int threshold,
+    int maxTimeDeltaMs = kDefaultSimilarMaxTimeDeltaMs,
+    int maxGroupSize = kDefaultSimilarMaxGroupSize,
   }) {
     final n = mediaIds.length;
     if (n == 0) return const [];
-
-    final parent = List<int>.generate(n, (i) => i);
-    final rank = List<int>.filled(n, 0);
-    final maxDist = List<int>.filled(n, 0);
-
-    int find(int x) {
-      var root = x;
-      while (parent[root] != root) {
-        root = parent[root];
-      }
-      var cur = x;
-      while (cur != root) {
-        final next = parent[cur];
-        parent[cur] = root;
-        cur = next;
-      }
-      return root;
-    }
-
-    void union(int a, int b, int distance) {
-      var ra = find(a);
-      var rb = find(b);
-      if (ra == rb) {
-        if (distance > maxDist[ra]) maxDist[ra] = distance;
-        return;
-      }
-      if (rank[ra] < rank[rb]) {
-        final tmp = ra;
-        ra = rb;
-        rb = tmp;
-      }
-      parent[rb] = ra;
-      if (rank[ra] == rank[rb]) rank[ra]++;
-      final merged =
-          maxDist[ra] > maxDist[rb] ? maxDist[ra] : maxDist[rb];
-      maxDist[ra] = merged > distance ? merged : distance;
-    }
 
     bool skipExactPair(int i, int j) {
       final a = contentHashes[i];
@@ -168,25 +160,46 @@ class SimilarGrouper {
       return a != null && a.isNotEmpty && a == b;
     }
 
-    // —— Exact dHash groups (O(n)) ——
-    final firstOfHash = <int, int>{};
+    bool withinTimeWindow(int i, int j) {
+      final a = createdMs[i];
+      final b = createdMs[j];
+      if (a <= 0 || b <= 0) return true;
+      return (a - b).abs() <= maxTimeDeltaMs;
+    }
+
+    // Adjacency: neighbor index + Hamming distance.
+    final neighbors = List.generate(n, (_) => <({int j, int d})>[]);
+
+    void addEdge(int i, int j, int d) {
+      if (i == j) return;
+      neighbors[i].add((j: j, d: d));
+      neighbors[j].add((j: i, d: d));
+    }
+
+    // —— Exact dHash edges (within time window) ——
+    final byExactHash = <int, List<int>>{};
     for (var i = 0; i < n; i++) {
-      final prev = firstOfHash[hashes[i]];
-      if (prev == null) {
-        firstOfHash[hashes[i]] = i;
-        continue;
-      }
-      if (!skipExactPair(i, prev)) {
-        union(i, prev, 0);
+      (byExactHash[hashes[i]] ??= <int>[]).add(i);
+    }
+    for (final bucket in byExactHash.values) {
+      if (bucket.length < 2) continue;
+      final limit =
+          bucket.length > maxGroupSize ? maxGroupSize : bucket.length;
+      for (var x = 0; x < limit; x++) {
+        for (var y = x + 1; y < limit; y++) {
+          final i = bucket[x];
+          final j = bucket[y];
+          if (skipExactPair(i, j)) continue;
+          if (!withinTimeWindow(i, j)) continue;
+          addEdge(i, j, 0);
+        }
       }
     }
 
-    // —— Near matches via 8-bit bands (8 bands cover 64-bit hash) ——
-    // Photos that share any identical band become candidates; Hamming verifies.
+    // —— Near matches via 8-bit LSH bands ——
     const bandBits = 8;
     const bandMask = (1 << bandBits) - 1;
-    const bandCount = 64 ~/ bandBits; // 8
-    // Cap pairwise work inside huge collision buckets (e.g. blank thumbs).
+    const bandCount = 64 ~/ bandBits;
     const maxBucketPairs = 120;
 
     for (var band = 0; band < bandCount; band++) {
@@ -206,33 +219,90 @@ class SimilarGrouper {
           for (var y = x + 1; y < limit; y++) {
             final j = bucket[y];
             if (skipExactPair(i, j)) continue;
+            if (!withinTimeWindow(i, j)) continue;
             final d = BkTree.hamming(hashes[i], hashes[j]);
             if (d <= threshold) {
-              union(i, j, d);
+              addEdge(i, j, d);
             }
           }
         }
       }
     }
 
-    final buckets = <int, List<String>>{};
-    final distByRoot = <int, int>{};
+    // Dedupe neighbor lists (same pair may appear from multiple bands).
     for (var i = 0; i < n; i++) {
-      final root = find(i);
-      (buckets[root] ??= <String>[]).add(mediaIds[i]);
-      distByRoot[root] = maxDist[root];
+      final best = <int, int>{};
+      for (final e in neighbors[i]) {
+        final prev = best[e.j];
+        if (prev == null || e.d < prev) best[e.j] = e.d;
+      }
+      neighbors[i] = [
+        for (final e in best.entries) (j: e.key, d: e.value),
+      ]..sort((a, b) => a.d.compareTo(b.d));
     }
 
-    return buckets.entries
-        .where((e) => e.value.length >= 2)
-        .map(
-          (e) => (
-            mediaIds: e.value,
-            maxDistance: distByRoot[e.key] ?? 0,
-          ),
-        )
-        .sortedBy<num>((g) => -g.mediaIds.length)
-        .toList();
+    // —— Center-star clusters with diameter ≤ threshold ——
+    final assigned = List<bool>.filled(n, false);
+    final groups = <({List<String> mediaIds, int maxDistance})>[];
+
+    while (true) {
+      var center = -1;
+      var bestDegree = -1;
+      for (var i = 0; i < n; i++) {
+        if (assigned[i]) continue;
+        var degree = 0;
+        for (final e in neighbors[i]) {
+          if (!assigned[e.j]) degree++;
+        }
+        if (degree > bestDegree) {
+          bestDegree = degree;
+          center = i;
+        }
+      }
+      if (center < 0) break;
+
+      if (bestDegree <= 0) {
+        assigned[center] = true;
+        continue;
+      }
+
+      final memberIdx = <int>[center];
+      assigned[center] = true;
+      var maxDistance = 0;
+
+      for (final e in neighbors[center]) {
+        if (assigned[e.j]) continue;
+        if (memberIdx.length >= maxGroupSize) break;
+        if (e.d > threshold) continue;
+
+        // Diameter: must stay within threshold of every current member.
+        var ok = true;
+        for (final m in memberIdx) {
+          final dm = m == center
+              ? e.d
+              : BkTree.hamming(hashes[e.j], hashes[m]);
+          if (dm > threshold) {
+            ok = false;
+            break;
+          }
+          if (dm > maxDistance) maxDistance = dm;
+        }
+        if (!ok) continue;
+
+        memberIdx.add(e.j);
+        assigned[e.j] = true;
+        if (e.d > maxDistance) maxDistance = e.d;
+      }
+
+      if (memberIdx.length >= 2) {
+        groups.add((
+          mediaIds: [for (final i in memberIdx) mediaIds[i]],
+          maxDistance: maxDistance,
+        ));
+      }
+    }
+
+    return groups.sortedBy<num>((g) => -g.mediaIds.length).toList();
   }
 }
 
@@ -244,6 +314,8 @@ List<({List<String> mediaIds, int maxDistance})> groupSimilarInIsolate(
     mediaIds: args.mediaIds,
     hashes: args.hashes,
     contentHashes: args.contentHashes,
+    createdMs: args.createdMs,
     threshold: args.threshold,
+    maxTimeDeltaMs: args.maxTimeDeltaMs,
   );
 }

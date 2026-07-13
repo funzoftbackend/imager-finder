@@ -57,7 +57,23 @@ class BkTree {
     return count;
   }
 
-  static int parseHash(String value) => int.parse(value);
+  /// Parses unsigned 64-bit hash decimals from native/Dart (may exceed signed max).
+  ///
+  /// Example that breaks [int.parse]: `17430056384809778366`.
+  static int parseHash(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      throw FormatException('Empty hash', value);
+    }
+    // Hex form (optional future / already-hex strings).
+    if (trimmed.length == 16 &&
+        RegExp(r'^[0-9a-fA-F]+$').hasMatch(trimmed)) {
+      return BigInt.parse(trimmed, radix: 16).toSigned(64).toInt();
+    }
+    final big = BigInt.parse(trimmed);
+    // Reinterpret low 64 bits as signed so XOR/Hamming stay correct.
+    return big.toUnsigned(64).toSigned(64).toInt();
+  }
 }
 
 class _BkNode {
