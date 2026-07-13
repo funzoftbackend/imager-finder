@@ -15,6 +15,9 @@ class AppColors {
 class ImageFinderApp extends StatelessWidget {
   const ImageFinderApp({super.key});
 
+
+//jkjweh wek 
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = ColorScheme.fromSeed(
