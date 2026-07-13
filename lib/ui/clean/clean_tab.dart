@@ -20,6 +20,8 @@ class _CleanTabState extends ConsumerState<CleanTab> {
   CleanCategory? _appliedCategory;
   int _appliedExactSignature = -1;
   int _appliedSimilarSignature = -1;
+  int _appliedDarkSignature = -1;
+  int _appliedBlurrySignature = -1;
   bool _userCleared = false;
 
   int _signatureForExact(List<ExactGroupView> groups) {
@@ -42,10 +44,16 @@ class _CleanTabState extends ConsumerState<CleanTab> {
     ]);
   }
 
+  int _signatureForPhotos(List<Photo> photos) {
+    return Object.hashAll([for (final p in photos) p.mediaId]);
+  }
+
   void _applyDefaultsIfNeeded({
     required CleanCategory category,
     required List<ExactGroupView> exactGroups,
     required List<SimilarGroupView> similarGroups,
+    required List<Photo> darkPhotos,
+    required List<Photo> blurryPhotos,
   }) {
     if (category == CleanCategory.duplicates) {
       final signature = _signatureForExact(exactGroups);
@@ -64,17 +72,51 @@ class _CleanTabState extends ConsumerState<CleanTab> {
       return;
     }
 
-    final signature = _signatureForSimilar(similarGroups);
-    final changed = _appliedCategory != category ||
-        _appliedSimilarSignature != signature;
+    if (category == CleanCategory.similar) {
+      final signature = _signatureForSimilar(similarGroups);
+      final changed = _appliedCategory != category ||
+          _appliedSimilarSignature != signature;
+      if (!changed) return;
+      _appliedCategory = category;
+      _appliedSimilarSignature = signature;
+      _userCleared = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _userCleared) return;
+        ref.read(cleanSelectionProvider.notifier).applySmartDefaults([
+          for (final g in similarGroups) g.photos,
+        ]);
+      });
+      return;
+    }
+
+    if (category == CleanCategory.dark) {
+      final signature = _signatureForPhotos(darkPhotos);
+      final changed =
+          _appliedCategory != category || _appliedDarkSignature != signature;
+      if (!changed) return;
+      _appliedCategory = category;
+      _appliedDarkSignature = signature;
+      _userCleared = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _userCleared) return;
+        ref.read(cleanSelectionProvider.notifier).selectAll([
+          for (final p in darkPhotos) p.mediaId,
+        ]);
+      });
+      return;
+    }
+
+    final signature = _signatureForPhotos(blurryPhotos);
+    final changed =
+        _appliedCategory != category || _appliedBlurrySignature != signature;
     if (!changed) return;
     _appliedCategory = category;
-    _appliedSimilarSignature = signature;
+    _appliedBlurrySignature = signature;
     _userCleared = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _userCleared) return;
-      ref.read(cleanSelectionProvider.notifier).applySmartDefaults([
-        for (final g in similarGroups) g.photos,
+      ref.read(cleanSelectionProvider.notifier).selectAll([
+        for (final p in blurryPhotos) p.mediaId,
       ]);
     });
   }
@@ -85,6 +127,8 @@ class _CleanTabState extends ConsumerState<CleanTab> {
     final selection = ref.watch(cleanSelectionProvider);
     final exactAsync = ref.watch(exactGroupsProvider);
     final similarAsync = ref.watch(similarGroupsProvider);
+    final darkAsync = ref.watch(darkPhotosProvider);
+    final blurryAsync = ref.watch(blurryPhotosProvider);
     final progress = ref.watch(scanProgressProvider);
     final scanning = progress.phase != ScanPhase.idle &&
         progress.phase != ScanPhase.done &&
@@ -104,22 +148,47 @@ class _CleanTabState extends ConsumerState<CleanTab> {
       loading: () => const <SimilarGroupView>[],
       error: (_, _) => const <SimilarGroupView>[],
     );
+    final darkPhotos = darkAsync.when(
+      skipLoadingOnReload: true,
+      skipLoadingOnRefresh: true,
+      data: (g) => g,
+      loading: () => const <Photo>[],
+      error: (_, _) => const <Photo>[],
+    );
+    final blurryPhotos = blurryAsync.when(
+      skipLoadingOnReload: true,
+      skipLoadingOnRefresh: true,
+      data: (g) => g,
+      loading: () => const <Photo>[],
+      error: (_, _) => const <Photo>[],
+    );
 
     _applyDefaultsIfNeeded(
       category: category,
       exactGroups: exactGroups,
       similarGroups: similarGroups,
+      darkPhotos: darkPhotos,
+      blurryPhotos: blurryPhotos,
     );
 
     final selectedBytes = _selectedBytes(
       selection,
       exactGroups,
       similarGroups,
+      darkPhotos,
+      blurryPhotos,
     );
 
-    final activePhotos = category == CleanCategory.duplicates
-        ? [for (final g in exactGroups) ...g.photos]
-        : [for (final g in similarGroups) ...g.photos];
+    final activePhotos = switch (category) {
+      CleanCategory.duplicates => [
+          for (final g in exactGroups) ...g.photos,
+        ],
+      CleanCategory.similar => [
+          for (final g in similarGroups) ...g.photos,
+        ],
+      CleanCategory.dark => darkPhotos,
+      CleanCategory.blurry => blurryPhotos,
+    };
     final totalInCategory = activePhotos.length;
     final selectedInCategory =
         activePhotos.where((p) => selection.contains(p.mediaId)).length;
@@ -182,6 +251,8 @@ class _CleanTabState extends ConsumerState<CleanTab> {
                     category: category,
                     exactCount: exactPhotoCount,
                     similarCount: similarPhotoCount,
+                    darkCount: darkPhotos.length,
+                    blurryCount: blurryPhotos.length,
                     onChanged: (value) {
                       ref
                           .read(cleanCategoryProvider.notifier)
@@ -191,17 +262,38 @@ class _CleanTabState extends ConsumerState<CleanTab> {
                 ),
                 const SizedBox(height: 12),
                 Expanded(
-                  child: category == CleanCategory.duplicates
-                      ? _ExactList(
-                          groups: exactGroups,
-                          scanning: scanning,
-                          loading: exactAsync.isLoading,
-                        )
-                      : _SimilarList(
-                          groups: similarGroups,
-                          scanning: scanning,
-                          loading: similarAsync.isLoading,
-                        ),
+                  child: switch (category) {
+                    CleanCategory.duplicates => _ExactList(
+                        groups: exactGroups,
+                        scanning: scanning,
+                        loading: exactAsync.isLoading,
+                      ),
+                    CleanCategory.similar => _SimilarList(
+                        groups: similarGroups,
+                        scanning: scanning,
+                        loading: similarAsync.isLoading,
+                      ),
+                    CleanCategory.dark => _QualityPhotoList(
+                        photos: darkPhotos,
+                        scanning: scanning,
+                        loading: darkAsync.isLoading,
+                        emptyTitle: 'No dark photos',
+                        emptySubtitle:
+                            'Underexposed shots will appear here after a scan.',
+                        scanningSubtitle:
+                            'Checking brightness while fingerprints run.',
+                      ),
+                    CleanCategory.blurry => _QualityPhotoList(
+                        photos: blurryPhotos,
+                        scanning: scanning,
+                        loading: blurryAsync.isLoading,
+                        emptyTitle: 'No blurry photos',
+                        emptySubtitle:
+                            'Out-of-focus shots will appear here after a scan.',
+                        scanningSubtitle:
+                            'Checking sharpness while fingerprints run.',
+                      ),
+                  },
                 ),
               ],
             ),
@@ -226,6 +318,8 @@ class _CleanTabState extends ConsumerState<CleanTab> {
     Set<String> selection,
     List<ExactGroupView> exact,
     List<SimilarGroupView> similar,
+    List<Photo> dark,
+    List<Photo> blurry,
   ) {
     final photos = <String, int>{};
     for (final g in exact) {
@@ -237,6 +331,12 @@ class _CleanTabState extends ConsumerState<CleanTab> {
       for (final p in g.photos) {
         photos[p.mediaId] = p.sizeBytes;
       }
+    }
+    for (final p in dark) {
+      photos[p.mediaId] = p.sizeBytes;
+    }
+    for (final p in blurry) {
+      photos[p.mediaId] = p.sizeBytes;
     }
     var total = 0;
     for (final id in selection) {
@@ -400,42 +500,78 @@ class _CategorySwitcher extends StatelessWidget {
     required this.category,
     required this.exactCount,
     required this.similarCount,
+    required this.darkCount,
+    required this.blurryCount,
     required this.onChanged,
   });
 
   final CleanCategory category;
   final int exactCount;
   final int similarCount;
+  final int darkCount;
+  final int blurryCount;
   final ValueChanged<CleanCategory> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _Chip(
-              label: 'Duplicates',
-              count: exactCount,
-              selected: category == CleanCategory.duplicates,
-              onTap: () => onChanged(CleanCategory.duplicates),
-            ),
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
           ),
-          Expanded(
-            child: _Chip(
-              label: 'Similar',
-              count: similarCount,
-              selected: category == CleanCategory.similar,
-              onTap: () => onChanged(CleanCategory.similar),
-            ),
+          child: Row(
+            children: [
+              Expanded(
+                child: _Chip(
+                  label: 'Duplicates',
+                  count: exactCount,
+                  selected: category == CleanCategory.duplicates,
+                  onTap: () => onChanged(CleanCategory.duplicates),
+                ),
+              ),
+              Expanded(
+                child: _Chip(
+                  label: 'Similar',
+                  count: similarCount,
+                  selected: category == CleanCategory.similar,
+                  onTap: () => onChanged(CleanCategory.similar),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: _Chip(
+                  label: 'Dark',
+                  count: darkCount,
+                  selected: category == CleanCategory.dark,
+                  onTap: () => onChanged(CleanCategory.dark),
+                ),
+              ),
+              Expanded(
+                child: _Chip(
+                  label: 'Blurry',
+                  count: blurryCount,
+                  selected: category == CleanCategory.blurry,
+                  onTap: () => onChanged(CleanCategory.blurry),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -595,6 +731,61 @@ class _SimilarList extends ConsumerWidget {
   }
 }
 
+class _QualityPhotoList extends ConsumerWidget {
+  const _QualityPhotoList({
+    required this.photos,
+    required this.scanning,
+    required this.loading,
+    required this.emptyTitle,
+    required this.emptySubtitle,
+    required this.scanningSubtitle,
+  });
+
+  final List<Photo> photos;
+  final bool scanning;
+  final bool loading;
+  final String emptyTitle;
+  final String emptySubtitle;
+  final String scanningSubtitle;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (loading && photos.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (photos.isEmpty) {
+      return _EmptyClean(
+        title: scanning ? 'Scanning…' : emptyTitle,
+        subtitle: scanning ? scanningSubtitle : emptySubtitle,
+      );
+    }
+
+    final selection = ref.watch(cleanSelectionProvider);
+    return GridView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 110),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        childAspectRatio: 1,
+      ),
+      itemCount: photos.length,
+      itemBuilder: (context, index) {
+        final photo = photos[index];
+        final selected = selection.contains(photo.mediaId);
+        return _SelectableThumb(
+          photo: photo,
+          selected: selected,
+          isKeep: false,
+          expand: true,
+          onTap: () =>
+              ref.read(cleanSelectionProvider.notifier).toggle(photo.mediaId),
+        );
+      },
+    );
+  }
+}
+
 class _GroupCard extends ConsumerWidget {
   const _GroupCard({
     required this.title,
@@ -731,93 +922,95 @@ class _SelectableThumb extends StatelessWidget {
     required this.selected,
     required this.isKeep,
     required this.onTap,
+    this.expand = false,
   });
 
   final Photo photo;
   final bool selected;
   final bool isKeep;
   final VoidCallback onTap;
+  final bool expand;
 
   @override
   Widget build(BuildContext context) {
+    final body = Stack(
+      children: [
+        Positioned.fill(
+          child: PhotoThumb(photo: photo, borderRadius: 14),
+        ),
+        Positioned(
+          top: 6,
+          right: 6,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            width: 22,
+            height: 22,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: selected
+                  ? const Color(0xFFE53935)
+                  : Colors.white.withValues(alpha: 0.92),
+              border: Border.all(
+                color: selected
+                    ? const Color(0xFFE53935)
+                    : Colors.white,
+                width: 1.5,
+              ),
+            ),
+            child: selected
+                ? const Icon(Icons.check, size: 14, color: Colors.white)
+                : null,
+          ),
+        ),
+        if (isKeep)
+          Positioned(
+            left: 6,
+            bottom: 6,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFF43A047),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'Keep',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        Positioned(
+          right: 6,
+          bottom: 6,
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E88E5),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              formatBytes(photo.sizeBytes),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+
     return GestureDetector(
       onTap: onTap,
-      child: SizedBox(
-        width: 96,
-        height: 96,
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: PhotoThumb(photo: photo, borderRadius: 14),
-            ),
-            Positioned(
-              top: 6,
-              right: 6,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 160),
-                width: 22,
-                height: 22,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: selected
-                      ? const Color(0xFFE53935)
-                      : Colors.white.withValues(alpha: 0.92),
-                  border: Border.all(
-                    color: selected
-                        ? const Color(0xFFE53935)
-                        : Colors.white,
-                    width: 1.5,
-                  ),
-                ),
-                child: selected
-                    ? const Icon(Icons.check, size: 14, color: Colors.white)
-                    : null,
-              ),
-            ),
-            if (isKeep)
-              Positioned(
-                left: 6,
-                bottom: 6,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF43A047),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Text(
-                    'Keep',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-            Positioned(
-              right: 6,
-              bottom: 6,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1E88E5),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  formatBytes(photo.sizeBytes),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+      child: expand
+          ? body
+          : SizedBox(width: 96, height: 96, child: body),
     );
   }
 }

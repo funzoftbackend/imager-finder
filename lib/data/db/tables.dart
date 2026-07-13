@@ -14,6 +14,12 @@ class Photos extends Table {
   TextColumn get contentHash => text().nullable()();
   TextColumn get dHash => text().nullable()();
   TextColumn get pHash => text().nullable()();
+  /// Mean luminance 0–255 from thumbnail (null = not scored yet).
+  RealColumn get meanLuminance => real().nullable()();
+  /// Laplacian variance; lower = blurrier (null = not scored yet).
+  RealColumn get blurScore => real().nullable()();
+  BoolColumn get isDark => boolean().nullable()();
+  BoolColumn get isBlurry => boolean().nullable()();
   IntColumn get indexedAtMs => integer()();
 
   @override
@@ -26,6 +32,8 @@ class ScanMeta extends Table {
   IntColumn get photoCount => integer().withDefault(const Constant(0))();
   IntColumn get exactGroupCount => integer().withDefault(const Constant(0))();
   IntColumn get similarGroupCount => integer().withDefault(const Constant(0))();
+  IntColumn get darkCount => integer().withDefault(const Constant(0))();
+  IntColumn get blurryCount => integer().withDefault(const Constant(0))();
   TextColumn get lastPhase => text().nullable()();
 
   @override

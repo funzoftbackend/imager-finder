@@ -20,7 +20,22 @@ class AppDatabase extends _$AppDatabase {
     : super(executor ?? driftDatabase(name: 'image_finder'));
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onCreate: (m) async => m.createAll(),
+        onUpgrade: (m, from, to) async {
+          if (from < 2) {
+            await m.addColumn(photos, photos.meanLuminance);
+            await m.addColumn(photos, photos.blurScore);
+            await m.addColumn(photos, photos.isDark);
+            await m.addColumn(photos, photos.isBlurry);
+            await m.addColumn(scanMeta, scanMeta.darkCount);
+            await m.addColumn(scanMeta, scanMeta.blurryCount);
+          }
+        },
+      );
 
   Future<List<Photo>> getAllPhotos() => select(photos).get();
 
@@ -47,6 +62,10 @@ class AppDatabase extends _$AppDatabase {
     String? contentHash,
     String? dHash,
     String? pHash,
+    double? meanLuminance,
+    double? blurScore,
+    bool? isDark,
+    bool? isBlurry,
   }) {
     return (update(photos)..where((t) => t.mediaId.equals(mediaId))).write(
       PhotosCompanion(
@@ -55,8 +74,29 @@ class AppDatabase extends _$AppDatabase {
             : const Value.absent(),
         dHash: dHash != null ? Value(dHash) : const Value.absent(),
         pHash: pHash != null ? Value(pHash) : const Value.absent(),
+        meanLuminance: meanLuminance != null
+            ? Value(meanLuminance)
+            : const Value.absent(),
+        blurScore:
+            blurScore != null ? Value(blurScore) : const Value.absent(),
+        isDark: isDark != null ? Value(isDark) : const Value.absent(),
+        isBlurry: isBlurry != null ? Value(isBlurry) : const Value.absent(),
       ),
     );
+  }
+
+  Future<List<Photo>> getDarkPhotos() {
+    return (select(photos)
+          ..where((t) => t.isDark.equals(true))
+          ..orderBy([(t) => OrderingTerm.asc(t.meanLuminance)]))
+        .get();
+  }
+
+  Future<List<Photo>> getBlurryPhotos() {
+    return (select(photos)
+          ..where((t) => t.isBlurry.equals(true))
+          ..orderBy([(t) => OrderingTerm.asc(t.blurScore)]))
+        .get();
   }
 
   Future<void> replaceExactGroups(
@@ -124,6 +164,8 @@ class AppDatabase extends _$AppDatabase {
     required int photoCount,
     required int exactGroupCount,
     required int similarGroupCount,
+    required int darkCount,
+    required int blurryCount,
     required String lastPhase,
   }) {
     return into(scanMeta).insertOnConflictUpdate(
@@ -133,6 +175,8 @@ class AppDatabase extends _$AppDatabase {
         photoCount: Value(photoCount),
         exactGroupCount: Value(exactGroupCount),
         similarGroupCount: Value(similarGroupCount),
+        darkCount: Value(darkCount),
+        blurryCount: Value(blurryCount),
         lastPhase: Value(lastPhase),
       ),
     );

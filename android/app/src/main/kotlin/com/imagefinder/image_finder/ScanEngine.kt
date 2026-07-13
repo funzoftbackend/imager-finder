@@ -91,22 +91,21 @@ class ScanEngine(
     }
 
     /**
-     * Parallel dHash using system thumbnails when available.
-     * Returns one map per input uri: { uri, dHash } (dHash null on failure).
+     * Parallel fingerprint (dHash + dark/blur scores) via system thumbnails.
+     * Returns maps: { uri, dHash, meanLuminance, blurScore } (nulls on failure).
      */
-    fun computeDHashBatch(uris: List<String>): List<Map<String, String?>> {
+    fun computeDHashBatch(uris: List<String>): List<Map<String, Any?>> {
         if (uris.isEmpty()) return emptyList()
 
-        val futures = ArrayList<Future<Map<String, String?>>>(uris.size)
+        val futures = ArrayList<Future<Map<String, Any?>>>(uris.size)
         for (uri in uris) {
             futures.add(
                 pool.submit(
                     Callable {
                         try {
-                            val hash = dHashForUri(uri)
-                            mapOf("uri" to uri, "dHash" to hash)
+                            fingerprintForUri(uri)
                         } catch (_: Exception) {
-                            mapOf("uri" to uri, "dHash" to null)
+                            failedFingerprint(uri)
                         }
                     },
                 ),
@@ -117,36 +116,55 @@ class ScanEngine(
             try {
                 futures[index].get(30, TimeUnit.SECONDS)
             } catch (_: Exception) {
-                mapOf("uri" to uris[index], "dHash" to null)
+                failedFingerprint(uris[index])
             }
         }
     }
 
-    private fun dHashForUri(uriString: String): String {
+    fun fingerprintForUri(uriString: String): Map<String, Any?> {
         val uri = android.net.Uri.parse(uriString)
         val thumb = loadSystemThumbnail(uri)
         if (thumb != null) {
             try {
-                return hashEngine.dHashFromBitmapPublic(thumb)
+                val fp = hashEngine.fingerprintFromBitmap(thumb)
+                return mapOf(
+                    "uri" to uriString,
+                    "dHash" to fp.dHash,
+                    "meanLuminance" to fp.meanLuminance,
+                    "blurScore" to fp.blurScore,
+                )
             } finally {
                 thumb.recycle()
             }
         }
-        // Fallback: sampled decode (still native, no Dart).
-        return hashEngine.computeDHash(uriString, 9)
+        val fp = hashEngine.fingerprintFromUri(uriString)
+        return mapOf(
+            "uri" to uriString,
+            "dHash" to fp.dHash,
+            "meanLuminance" to fp.meanLuminance,
+            "blurScore" to fp.blurScore,
+        )
     }
 
+    private fun failedFingerprint(uri: String): Map<String, Any?> = mapOf(
+        "uri" to uri,
+        "dHash" to null,
+        "meanLuminance" to null,
+        "blurScore" to null,
+    )
+
+    /** 64×64 thumbs — enough for Laplacian blur without full-res decode. */
     private fun loadSystemThumbnail(uri: android.net.Uri): Bitmap? {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val signal = CancellationSignal()
-                context.contentResolver.loadThumbnail(uri, Size(32, 32), signal)
+                context.contentResolver.loadThumbnail(uri, Size(64, 64), signal)
             } else {
                 @Suppress("DEPRECATION")
                 MediaStore.Images.Thumbnails.getThumbnail(
                     context.contentResolver,
                     ContentUris.parseId(uri),
-                    MediaStore.Images.Thumbnails.MICRO_KIND,
+                    MediaStore.Images.Thumbnails.MINI_KIND,
                     null,
                 )
             }

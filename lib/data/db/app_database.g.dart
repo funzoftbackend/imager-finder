@@ -138,6 +138,54 @@ class $PhotosTable extends Photos with TableInfo<$PhotosTable, Photo> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _meanLuminanceMeta = const VerificationMeta(
+    'meanLuminance',
+  );
+  @override
+  late final GeneratedColumn<double> meanLuminance = GeneratedColumn<double>(
+    'mean_luminance',
+    aliasedName,
+    true,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _blurScoreMeta = const VerificationMeta(
+    'blurScore',
+  );
+  @override
+  late final GeneratedColumn<double> blurScore = GeneratedColumn<double>(
+    'blur_score',
+    aliasedName,
+    true,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _isDarkMeta = const VerificationMeta('isDark');
+  @override
+  late final GeneratedColumn<bool> isDark = GeneratedColumn<bool>(
+    'is_dark',
+    aliasedName,
+    true,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_dark" IN (0, 1))',
+    ),
+  );
+  static const VerificationMeta _isBlurryMeta = const VerificationMeta(
+    'isBlurry',
+  );
+  @override
+  late final GeneratedColumn<bool> isBlurry = GeneratedColumn<bool>(
+    'is_blurry',
+    aliasedName,
+    true,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_blurry" IN (0, 1))',
+    ),
+  );
   static const VerificationMeta _indexedAtMsMeta = const VerificationMeta(
     'indexedAtMs',
   );
@@ -164,6 +212,10 @@ class $PhotosTable extends Photos with TableInfo<$PhotosTable, Photo> {
     contentHash,
     dHash,
     pHash,
+    meanLuminance,
+    blurScore,
+    isDark,
+    isBlurry,
     indexedAtMs,
   ];
   @override
@@ -267,6 +319,33 @@ class $PhotosTable extends Photos with TableInfo<$PhotosTable, Photo> {
         pHash.isAcceptableOrUnknown(data['p_hash']!, _pHashMeta),
       );
     }
+    if (data.containsKey('mean_luminance')) {
+      context.handle(
+        _meanLuminanceMeta,
+        meanLuminance.isAcceptableOrUnknown(
+          data['mean_luminance']!,
+          _meanLuminanceMeta,
+        ),
+      );
+    }
+    if (data.containsKey('blur_score')) {
+      context.handle(
+        _blurScoreMeta,
+        blurScore.isAcceptableOrUnknown(data['blur_score']!, _blurScoreMeta),
+      );
+    }
+    if (data.containsKey('is_dark')) {
+      context.handle(
+        _isDarkMeta,
+        isDark.isAcceptableOrUnknown(data['is_dark']!, _isDarkMeta),
+      );
+    }
+    if (data.containsKey('is_blurry')) {
+      context.handle(
+        _isBlurryMeta,
+        isBlurry.isAcceptableOrUnknown(data['is_blurry']!, _isBlurryMeta),
+      );
+    }
     if (data.containsKey('indexed_at_ms')) {
       context.handle(
         _indexedAtMsMeta,
@@ -339,6 +418,22 @@ class $PhotosTable extends Photos with TableInfo<$PhotosTable, Photo> {
         DriftSqlType.string,
         data['${effectivePrefix}p_hash'],
       ),
+      meanLuminance: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}mean_luminance'],
+      ),
+      blurScore: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}blur_score'],
+      ),
+      isDark: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_dark'],
+      ),
+      isBlurry: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_blurry'],
+      ),
       indexedAtMs: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}indexed_at_ms'],
@@ -366,6 +461,14 @@ class Photo extends DataClass implements Insertable<Photo> {
   final String? contentHash;
   final String? dHash;
   final String? pHash;
+
+  /// Mean luminance 0–255 from thumbnail (null = not scored yet).
+  final double? meanLuminance;
+
+  /// Laplacian variance; lower = blurrier (null = not scored yet).
+  final double? blurScore;
+  final bool? isDark;
+  final bool? isBlurry;
   final int indexedAtMs;
   const Photo({
     required this.mediaId,
@@ -381,6 +484,10 @@ class Photo extends DataClass implements Insertable<Photo> {
     this.contentHash,
     this.dHash,
     this.pHash,
+    this.meanLuminance,
+    this.blurScore,
+    this.isDark,
+    this.isBlurry,
     required this.indexedAtMs,
   });
   @override
@@ -411,6 +518,18 @@ class Photo extends DataClass implements Insertable<Photo> {
     if (!nullToAbsent || pHash != null) {
       map['p_hash'] = Variable<String>(pHash);
     }
+    if (!nullToAbsent || meanLuminance != null) {
+      map['mean_luminance'] = Variable<double>(meanLuminance);
+    }
+    if (!nullToAbsent || blurScore != null) {
+      map['blur_score'] = Variable<double>(blurScore);
+    }
+    if (!nullToAbsent || isDark != null) {
+      map['is_dark'] = Variable<bool>(isDark);
+    }
+    if (!nullToAbsent || isBlurry != null) {
+      map['is_blurry'] = Variable<bool>(isBlurry);
+    }
     map['indexed_at_ms'] = Variable<int>(indexedAtMs);
     return map;
   }
@@ -438,6 +557,18 @@ class Photo extends DataClass implements Insertable<Photo> {
       pHash: pHash == null && nullToAbsent
           ? const Value.absent()
           : Value(pHash),
+      meanLuminance: meanLuminance == null && nullToAbsent
+          ? const Value.absent()
+          : Value(meanLuminance),
+      blurScore: blurScore == null && nullToAbsent
+          ? const Value.absent()
+          : Value(blurScore),
+      isDark: isDark == null && nullToAbsent
+          ? const Value.absent()
+          : Value(isDark),
+      isBlurry: isBlurry == null && nullToAbsent
+          ? const Value.absent()
+          : Value(isBlurry),
       indexedAtMs: Value(indexedAtMs),
     );
   }
@@ -461,6 +592,10 @@ class Photo extends DataClass implements Insertable<Photo> {
       contentHash: serializer.fromJson<String?>(json['contentHash']),
       dHash: serializer.fromJson<String?>(json['dHash']),
       pHash: serializer.fromJson<String?>(json['pHash']),
+      meanLuminance: serializer.fromJson<double?>(json['meanLuminance']),
+      blurScore: serializer.fromJson<double?>(json['blurScore']),
+      isDark: serializer.fromJson<bool?>(json['isDark']),
+      isBlurry: serializer.fromJson<bool?>(json['isBlurry']),
       indexedAtMs: serializer.fromJson<int>(json['indexedAtMs']),
     );
   }
@@ -481,6 +616,10 @@ class Photo extends DataClass implements Insertable<Photo> {
       'contentHash': serializer.toJson<String?>(contentHash),
       'dHash': serializer.toJson<String?>(dHash),
       'pHash': serializer.toJson<String?>(pHash),
+      'meanLuminance': serializer.toJson<double?>(meanLuminance),
+      'blurScore': serializer.toJson<double?>(blurScore),
+      'isDark': serializer.toJson<bool?>(isDark),
+      'isBlurry': serializer.toJson<bool?>(isBlurry),
       'indexedAtMs': serializer.toJson<int>(indexedAtMs),
     };
   }
@@ -499,6 +638,10 @@ class Photo extends DataClass implements Insertable<Photo> {
     Value<String?> contentHash = const Value.absent(),
     Value<String?> dHash = const Value.absent(),
     Value<String?> pHash = const Value.absent(),
+    Value<double?> meanLuminance = const Value.absent(),
+    Value<double?> blurScore = const Value.absent(),
+    Value<bool?> isDark = const Value.absent(),
+    Value<bool?> isBlurry = const Value.absent(),
     int? indexedAtMs,
   }) => Photo(
     mediaId: mediaId ?? this.mediaId,
@@ -514,6 +657,12 @@ class Photo extends DataClass implements Insertable<Photo> {
     contentHash: contentHash.present ? contentHash.value : this.contentHash,
     dHash: dHash.present ? dHash.value : this.dHash,
     pHash: pHash.present ? pHash.value : this.pHash,
+    meanLuminance: meanLuminance.present
+        ? meanLuminance.value
+        : this.meanLuminance,
+    blurScore: blurScore.present ? blurScore.value : this.blurScore,
+    isDark: isDark.present ? isDark.value : this.isDark,
+    isBlurry: isBlurry.present ? isBlurry.value : this.isBlurry,
     indexedAtMs: indexedAtMs ?? this.indexedAtMs,
   );
   Photo copyWithCompanion(PhotosCompanion data) {
@@ -535,6 +684,12 @@ class Photo extends DataClass implements Insertable<Photo> {
           : this.contentHash,
       dHash: data.dHash.present ? data.dHash.value : this.dHash,
       pHash: data.pHash.present ? data.pHash.value : this.pHash,
+      meanLuminance: data.meanLuminance.present
+          ? data.meanLuminance.value
+          : this.meanLuminance,
+      blurScore: data.blurScore.present ? data.blurScore.value : this.blurScore,
+      isDark: data.isDark.present ? data.isDark.value : this.isDark,
+      isBlurry: data.isBlurry.present ? data.isBlurry.value : this.isBlurry,
       indexedAtMs: data.indexedAtMs.present
           ? data.indexedAtMs.value
           : this.indexedAtMs,
@@ -557,6 +712,10 @@ class Photo extends DataClass implements Insertable<Photo> {
           ..write('contentHash: $contentHash, ')
           ..write('dHash: $dHash, ')
           ..write('pHash: $pHash, ')
+          ..write('meanLuminance: $meanLuminance, ')
+          ..write('blurScore: $blurScore, ')
+          ..write('isDark: $isDark, ')
+          ..write('isBlurry: $isBlurry, ')
           ..write('indexedAtMs: $indexedAtMs')
           ..write(')'))
         .toString();
@@ -577,6 +736,10 @@ class Photo extends DataClass implements Insertable<Photo> {
     contentHash,
     dHash,
     pHash,
+    meanLuminance,
+    blurScore,
+    isDark,
+    isBlurry,
     indexedAtMs,
   );
   @override
@@ -596,6 +759,10 @@ class Photo extends DataClass implements Insertable<Photo> {
           other.contentHash == this.contentHash &&
           other.dHash == this.dHash &&
           other.pHash == this.pHash &&
+          other.meanLuminance == this.meanLuminance &&
+          other.blurScore == this.blurScore &&
+          other.isDark == this.isDark &&
+          other.isBlurry == this.isBlurry &&
           other.indexedAtMs == this.indexedAtMs);
 }
 
@@ -613,6 +780,10 @@ class PhotosCompanion extends UpdateCompanion<Photo> {
   final Value<String?> contentHash;
   final Value<String?> dHash;
   final Value<String?> pHash;
+  final Value<double?> meanLuminance;
+  final Value<double?> blurScore;
+  final Value<bool?> isDark;
+  final Value<bool?> isBlurry;
   final Value<int> indexedAtMs;
   final Value<int> rowid;
   const PhotosCompanion({
@@ -629,6 +800,10 @@ class PhotosCompanion extends UpdateCompanion<Photo> {
     this.contentHash = const Value.absent(),
     this.dHash = const Value.absent(),
     this.pHash = const Value.absent(),
+    this.meanLuminance = const Value.absent(),
+    this.blurScore = const Value.absent(),
+    this.isDark = const Value.absent(),
+    this.isBlurry = const Value.absent(),
     this.indexedAtMs = const Value.absent(),
     this.rowid = const Value.absent(),
   });
@@ -646,6 +821,10 @@ class PhotosCompanion extends UpdateCompanion<Photo> {
     this.contentHash = const Value.absent(),
     this.dHash = const Value.absent(),
     this.pHash = const Value.absent(),
+    this.meanLuminance = const Value.absent(),
+    this.blurScore = const Value.absent(),
+    this.isDark = const Value.absent(),
+    this.isBlurry = const Value.absent(),
     required int indexedAtMs,
     this.rowid = const Value.absent(),
   }) : mediaId = Value(mediaId),
@@ -667,6 +846,10 @@ class PhotosCompanion extends UpdateCompanion<Photo> {
     Expression<String>? contentHash,
     Expression<String>? dHash,
     Expression<String>? pHash,
+    Expression<double>? meanLuminance,
+    Expression<double>? blurScore,
+    Expression<bool>? isDark,
+    Expression<bool>? isBlurry,
     Expression<int>? indexedAtMs,
     Expression<int>? rowid,
   }) {
@@ -684,6 +867,10 @@ class PhotosCompanion extends UpdateCompanion<Photo> {
       if (contentHash != null) 'content_hash': contentHash,
       if (dHash != null) 'd_hash': dHash,
       if (pHash != null) 'p_hash': pHash,
+      if (meanLuminance != null) 'mean_luminance': meanLuminance,
+      if (blurScore != null) 'blur_score': blurScore,
+      if (isDark != null) 'is_dark': isDark,
+      if (isBlurry != null) 'is_blurry': isBlurry,
       if (indexedAtMs != null) 'indexed_at_ms': indexedAtMs,
       if (rowid != null) 'rowid': rowid,
     });
@@ -703,6 +890,10 @@ class PhotosCompanion extends UpdateCompanion<Photo> {
     Value<String?>? contentHash,
     Value<String?>? dHash,
     Value<String?>? pHash,
+    Value<double?>? meanLuminance,
+    Value<double?>? blurScore,
+    Value<bool?>? isDark,
+    Value<bool?>? isBlurry,
     Value<int>? indexedAtMs,
     Value<int>? rowid,
   }) {
@@ -720,6 +911,10 @@ class PhotosCompanion extends UpdateCompanion<Photo> {
       contentHash: contentHash ?? this.contentHash,
       dHash: dHash ?? this.dHash,
       pHash: pHash ?? this.pHash,
+      meanLuminance: meanLuminance ?? this.meanLuminance,
+      blurScore: blurScore ?? this.blurScore,
+      isDark: isDark ?? this.isDark,
+      isBlurry: isBlurry ?? this.isBlurry,
       indexedAtMs: indexedAtMs ?? this.indexedAtMs,
       rowid: rowid ?? this.rowid,
     );
@@ -767,6 +962,18 @@ class PhotosCompanion extends UpdateCompanion<Photo> {
     if (pHash.present) {
       map['p_hash'] = Variable<String>(pHash.value);
     }
+    if (meanLuminance.present) {
+      map['mean_luminance'] = Variable<double>(meanLuminance.value);
+    }
+    if (blurScore.present) {
+      map['blur_score'] = Variable<double>(blurScore.value);
+    }
+    if (isDark.present) {
+      map['is_dark'] = Variable<bool>(isDark.value);
+    }
+    if (isBlurry.present) {
+      map['is_blurry'] = Variable<bool>(isBlurry.value);
+    }
     if (indexedAtMs.present) {
       map['indexed_at_ms'] = Variable<int>(indexedAtMs.value);
     }
@@ -792,6 +999,10 @@ class PhotosCompanion extends UpdateCompanion<Photo> {
           ..write('contentHash: $contentHash, ')
           ..write('dHash: $dHash, ')
           ..write('pHash: $pHash, ')
+          ..write('meanLuminance: $meanLuminance, ')
+          ..write('blurScore: $blurScore, ')
+          ..write('isDark: $isDark, ')
+          ..write('isBlurry: $isBlurry, ')
           ..write('indexedAtMs: $indexedAtMs, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -862,6 +1073,30 @@ class $ScanMetaTable extends ScanMeta
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _darkCountMeta = const VerificationMeta(
+    'darkCount',
+  );
+  @override
+  late final GeneratedColumn<int> darkCount = GeneratedColumn<int>(
+    'dark_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _blurryCountMeta = const VerificationMeta(
+    'blurryCount',
+  );
+  @override
+  late final GeneratedColumn<int> blurryCount = GeneratedColumn<int>(
+    'blurry_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
   static const VerificationMeta _lastPhaseMeta = const VerificationMeta(
     'lastPhase',
   );
@@ -880,6 +1115,8 @@ class $ScanMetaTable extends ScanMeta
     photoCount,
     exactGroupCount,
     similarGroupCount,
+    darkCount,
+    blurryCount,
     lastPhase,
   ];
   @override
@@ -930,6 +1167,21 @@ class $ScanMetaTable extends ScanMeta
         ),
       );
     }
+    if (data.containsKey('dark_count')) {
+      context.handle(
+        _darkCountMeta,
+        darkCount.isAcceptableOrUnknown(data['dark_count']!, _darkCountMeta),
+      );
+    }
+    if (data.containsKey('blurry_count')) {
+      context.handle(
+        _blurryCountMeta,
+        blurryCount.isAcceptableOrUnknown(
+          data['blurry_count']!,
+          _blurryCountMeta,
+        ),
+      );
+    }
     if (data.containsKey('last_phase')) {
       context.handle(
         _lastPhaseMeta,
@@ -965,6 +1217,14 @@ class $ScanMetaTable extends ScanMeta
         DriftSqlType.int,
         data['${effectivePrefix}similar_group_count'],
       )!,
+      darkCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}dark_count'],
+      )!,
+      blurryCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}blurry_count'],
+      )!,
       lastPhase: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}last_phase'],
@@ -984,6 +1244,8 @@ class ScanMetaData extends DataClass implements Insertable<ScanMetaData> {
   final int photoCount;
   final int exactGroupCount;
   final int similarGroupCount;
+  final int darkCount;
+  final int blurryCount;
   final String? lastPhase;
   const ScanMetaData({
     required this.id,
@@ -991,6 +1253,8 @@ class ScanMetaData extends DataClass implements Insertable<ScanMetaData> {
     required this.photoCount,
     required this.exactGroupCount,
     required this.similarGroupCount,
+    required this.darkCount,
+    required this.blurryCount,
     this.lastPhase,
   });
   @override
@@ -1003,6 +1267,8 @@ class ScanMetaData extends DataClass implements Insertable<ScanMetaData> {
     map['photo_count'] = Variable<int>(photoCount);
     map['exact_group_count'] = Variable<int>(exactGroupCount);
     map['similar_group_count'] = Variable<int>(similarGroupCount);
+    map['dark_count'] = Variable<int>(darkCount);
+    map['blurry_count'] = Variable<int>(blurryCount);
     if (!nullToAbsent || lastPhase != null) {
       map['last_phase'] = Variable<String>(lastPhase);
     }
@@ -1018,6 +1284,8 @@ class ScanMetaData extends DataClass implements Insertable<ScanMetaData> {
       photoCount: Value(photoCount),
       exactGroupCount: Value(exactGroupCount),
       similarGroupCount: Value(similarGroupCount),
+      darkCount: Value(darkCount),
+      blurryCount: Value(blurryCount),
       lastPhase: lastPhase == null && nullToAbsent
           ? const Value.absent()
           : Value(lastPhase),
@@ -1035,6 +1303,8 @@ class ScanMetaData extends DataClass implements Insertable<ScanMetaData> {
       photoCount: serializer.fromJson<int>(json['photoCount']),
       exactGroupCount: serializer.fromJson<int>(json['exactGroupCount']),
       similarGroupCount: serializer.fromJson<int>(json['similarGroupCount']),
+      darkCount: serializer.fromJson<int>(json['darkCount']),
+      blurryCount: serializer.fromJson<int>(json['blurryCount']),
       lastPhase: serializer.fromJson<String?>(json['lastPhase']),
     );
   }
@@ -1047,6 +1317,8 @@ class ScanMetaData extends DataClass implements Insertable<ScanMetaData> {
       'photoCount': serializer.toJson<int>(photoCount),
       'exactGroupCount': serializer.toJson<int>(exactGroupCount),
       'similarGroupCount': serializer.toJson<int>(similarGroupCount),
+      'darkCount': serializer.toJson<int>(darkCount),
+      'blurryCount': serializer.toJson<int>(blurryCount),
       'lastPhase': serializer.toJson<String?>(lastPhase),
     };
   }
@@ -1057,6 +1329,8 @@ class ScanMetaData extends DataClass implements Insertable<ScanMetaData> {
     int? photoCount,
     int? exactGroupCount,
     int? similarGroupCount,
+    int? darkCount,
+    int? blurryCount,
     Value<String?> lastPhase = const Value.absent(),
   }) => ScanMetaData(
     id: id ?? this.id,
@@ -1064,6 +1338,8 @@ class ScanMetaData extends DataClass implements Insertable<ScanMetaData> {
     photoCount: photoCount ?? this.photoCount,
     exactGroupCount: exactGroupCount ?? this.exactGroupCount,
     similarGroupCount: similarGroupCount ?? this.similarGroupCount,
+    darkCount: darkCount ?? this.darkCount,
+    blurryCount: blurryCount ?? this.blurryCount,
     lastPhase: lastPhase.present ? lastPhase.value : this.lastPhase,
   );
   ScanMetaData copyWithCompanion(ScanMetaCompanion data) {
@@ -1081,6 +1357,10 @@ class ScanMetaData extends DataClass implements Insertable<ScanMetaData> {
       similarGroupCount: data.similarGroupCount.present
           ? data.similarGroupCount.value
           : this.similarGroupCount,
+      darkCount: data.darkCount.present ? data.darkCount.value : this.darkCount,
+      blurryCount: data.blurryCount.present
+          ? data.blurryCount.value
+          : this.blurryCount,
       lastPhase: data.lastPhase.present ? data.lastPhase.value : this.lastPhase,
     );
   }
@@ -1093,6 +1373,8 @@ class ScanMetaData extends DataClass implements Insertable<ScanMetaData> {
           ..write('photoCount: $photoCount, ')
           ..write('exactGroupCount: $exactGroupCount, ')
           ..write('similarGroupCount: $similarGroupCount, ')
+          ..write('darkCount: $darkCount, ')
+          ..write('blurryCount: $blurryCount, ')
           ..write('lastPhase: $lastPhase')
           ..write(')'))
         .toString();
@@ -1105,6 +1387,8 @@ class ScanMetaData extends DataClass implements Insertable<ScanMetaData> {
     photoCount,
     exactGroupCount,
     similarGroupCount,
+    darkCount,
+    blurryCount,
     lastPhase,
   );
   @override
@@ -1116,6 +1400,8 @@ class ScanMetaData extends DataClass implements Insertable<ScanMetaData> {
           other.photoCount == this.photoCount &&
           other.exactGroupCount == this.exactGroupCount &&
           other.similarGroupCount == this.similarGroupCount &&
+          other.darkCount == this.darkCount &&
+          other.blurryCount == this.blurryCount &&
           other.lastPhase == this.lastPhase);
 }
 
@@ -1125,6 +1411,8 @@ class ScanMetaCompanion extends UpdateCompanion<ScanMetaData> {
   final Value<int> photoCount;
   final Value<int> exactGroupCount;
   final Value<int> similarGroupCount;
+  final Value<int> darkCount;
+  final Value<int> blurryCount;
   final Value<String?> lastPhase;
   const ScanMetaCompanion({
     this.id = const Value.absent(),
@@ -1132,6 +1420,8 @@ class ScanMetaCompanion extends UpdateCompanion<ScanMetaData> {
     this.photoCount = const Value.absent(),
     this.exactGroupCount = const Value.absent(),
     this.similarGroupCount = const Value.absent(),
+    this.darkCount = const Value.absent(),
+    this.blurryCount = const Value.absent(),
     this.lastPhase = const Value.absent(),
   });
   ScanMetaCompanion.insert({
@@ -1140,6 +1430,8 @@ class ScanMetaCompanion extends UpdateCompanion<ScanMetaData> {
     this.photoCount = const Value.absent(),
     this.exactGroupCount = const Value.absent(),
     this.similarGroupCount = const Value.absent(),
+    this.darkCount = const Value.absent(),
+    this.blurryCount = const Value.absent(),
     this.lastPhase = const Value.absent(),
   });
   static Insertable<ScanMetaData> custom({
@@ -1148,6 +1440,8 @@ class ScanMetaCompanion extends UpdateCompanion<ScanMetaData> {
     Expression<int>? photoCount,
     Expression<int>? exactGroupCount,
     Expression<int>? similarGroupCount,
+    Expression<int>? darkCount,
+    Expression<int>? blurryCount,
     Expression<String>? lastPhase,
   }) {
     return RawValuesInsertable({
@@ -1156,6 +1450,8 @@ class ScanMetaCompanion extends UpdateCompanion<ScanMetaData> {
       if (photoCount != null) 'photo_count': photoCount,
       if (exactGroupCount != null) 'exact_group_count': exactGroupCount,
       if (similarGroupCount != null) 'similar_group_count': similarGroupCount,
+      if (darkCount != null) 'dark_count': darkCount,
+      if (blurryCount != null) 'blurry_count': blurryCount,
       if (lastPhase != null) 'last_phase': lastPhase,
     });
   }
@@ -1166,6 +1462,8 @@ class ScanMetaCompanion extends UpdateCompanion<ScanMetaData> {
     Value<int>? photoCount,
     Value<int>? exactGroupCount,
     Value<int>? similarGroupCount,
+    Value<int>? darkCount,
+    Value<int>? blurryCount,
     Value<String?>? lastPhase,
   }) {
     return ScanMetaCompanion(
@@ -1174,6 +1472,8 @@ class ScanMetaCompanion extends UpdateCompanion<ScanMetaData> {
       photoCount: photoCount ?? this.photoCount,
       exactGroupCount: exactGroupCount ?? this.exactGroupCount,
       similarGroupCount: similarGroupCount ?? this.similarGroupCount,
+      darkCount: darkCount ?? this.darkCount,
+      blurryCount: blurryCount ?? this.blurryCount,
       lastPhase: lastPhase ?? this.lastPhase,
     );
   }
@@ -1196,6 +1496,12 @@ class ScanMetaCompanion extends UpdateCompanion<ScanMetaData> {
     if (similarGroupCount.present) {
       map['similar_group_count'] = Variable<int>(similarGroupCount.value);
     }
+    if (darkCount.present) {
+      map['dark_count'] = Variable<int>(darkCount.value);
+    }
+    if (blurryCount.present) {
+      map['blurry_count'] = Variable<int>(blurryCount.value);
+    }
     if (lastPhase.present) {
       map['last_phase'] = Variable<String>(lastPhase.value);
     }
@@ -1210,6 +1516,8 @@ class ScanMetaCompanion extends UpdateCompanion<ScanMetaData> {
           ..write('photoCount: $photoCount, ')
           ..write('exactGroupCount: $exactGroupCount, ')
           ..write('similarGroupCount: $similarGroupCount, ')
+          ..write('darkCount: $darkCount, ')
+          ..write('blurryCount: $blurryCount, ')
           ..write('lastPhase: $lastPhase')
           ..write(')'))
         .toString();
@@ -2268,6 +2576,10 @@ typedef $$PhotosTableCreateCompanionBuilder =
       Value<String?> contentHash,
       Value<String?> dHash,
       Value<String?> pHash,
+      Value<double?> meanLuminance,
+      Value<double?> blurScore,
+      Value<bool?> isDark,
+      Value<bool?> isBlurry,
       required int indexedAtMs,
       Value<int> rowid,
     });
@@ -2286,6 +2598,10 @@ typedef $$PhotosTableUpdateCompanionBuilder =
       Value<String?> contentHash,
       Value<String?> dHash,
       Value<String?> pHash,
+      Value<double?> meanLuminance,
+      Value<double?> blurScore,
+      Value<bool?> isDark,
+      Value<bool?> isBlurry,
       Value<int> indexedAtMs,
       Value<int> rowid,
     });
@@ -2361,6 +2677,26 @@ class $$PhotosTableFilterComposer
 
   ColumnFilters<String> get pHash => $composableBuilder(
     column: $table.pHash,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get meanLuminance => $composableBuilder(
+    column: $table.meanLuminance,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get blurScore => $composableBuilder(
+    column: $table.blurScore,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isDark => $composableBuilder(
+    column: $table.isDark,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isBlurry => $composableBuilder(
+    column: $table.isBlurry,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -2444,6 +2780,26 @@ class $$PhotosTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<double> get meanLuminance => $composableBuilder(
+    column: $table.meanLuminance,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get blurScore => $composableBuilder(
+    column: $table.blurScore,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get isDark => $composableBuilder(
+    column: $table.isDark,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get isBlurry => $composableBuilder(
+    column: $table.isBlurry,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get indexedAtMs => $composableBuilder(
     column: $table.indexedAtMs,
     builder: (column) => ColumnOrderings(column),
@@ -2502,6 +2858,20 @@ class $$PhotosTableAnnotationComposer
   GeneratedColumn<String> get pHash =>
       $composableBuilder(column: $table.pHash, builder: (column) => column);
 
+  GeneratedColumn<double> get meanLuminance => $composableBuilder(
+    column: $table.meanLuminance,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get blurScore =>
+      $composableBuilder(column: $table.blurScore, builder: (column) => column);
+
+  GeneratedColumn<bool> get isDark =>
+      $composableBuilder(column: $table.isDark, builder: (column) => column);
+
+  GeneratedColumn<bool> get isBlurry =>
+      $composableBuilder(column: $table.isBlurry, builder: (column) => column);
+
   GeneratedColumn<int> get indexedAtMs => $composableBuilder(
     column: $table.indexedAtMs,
     builder: (column) => column,
@@ -2549,6 +2919,10 @@ class $$PhotosTableTableManager
                 Value<String?> contentHash = const Value.absent(),
                 Value<String?> dHash = const Value.absent(),
                 Value<String?> pHash = const Value.absent(),
+                Value<double?> meanLuminance = const Value.absent(),
+                Value<double?> blurScore = const Value.absent(),
+                Value<bool?> isDark = const Value.absent(),
+                Value<bool?> isBlurry = const Value.absent(),
                 Value<int> indexedAtMs = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => PhotosCompanion(
@@ -2565,6 +2939,10 @@ class $$PhotosTableTableManager
                 contentHash: contentHash,
                 dHash: dHash,
                 pHash: pHash,
+                meanLuminance: meanLuminance,
+                blurScore: blurScore,
+                isDark: isDark,
+                isBlurry: isBlurry,
                 indexedAtMs: indexedAtMs,
                 rowid: rowid,
               ),
@@ -2583,6 +2961,10 @@ class $$PhotosTableTableManager
                 Value<String?> contentHash = const Value.absent(),
                 Value<String?> dHash = const Value.absent(),
                 Value<String?> pHash = const Value.absent(),
+                Value<double?> meanLuminance = const Value.absent(),
+                Value<double?> blurScore = const Value.absent(),
+                Value<bool?> isDark = const Value.absent(),
+                Value<bool?> isBlurry = const Value.absent(),
                 required int indexedAtMs,
                 Value<int> rowid = const Value.absent(),
               }) => PhotosCompanion.insert(
@@ -2599,6 +2981,10 @@ class $$PhotosTableTableManager
                 contentHash: contentHash,
                 dHash: dHash,
                 pHash: pHash,
+                meanLuminance: meanLuminance,
+                blurScore: blurScore,
+                isDark: isDark,
+                isBlurry: isBlurry,
                 indexedAtMs: indexedAtMs,
                 rowid: rowid,
               ),
@@ -2631,6 +3017,8 @@ typedef $$ScanMetaTableCreateCompanionBuilder =
       Value<int> photoCount,
       Value<int> exactGroupCount,
       Value<int> similarGroupCount,
+      Value<int> darkCount,
+      Value<int> blurryCount,
       Value<String?> lastPhase,
     });
 typedef $$ScanMetaTableUpdateCompanionBuilder =
@@ -2640,6 +3028,8 @@ typedef $$ScanMetaTableUpdateCompanionBuilder =
       Value<int> photoCount,
       Value<int> exactGroupCount,
       Value<int> similarGroupCount,
+      Value<int> darkCount,
+      Value<int> blurryCount,
       Value<String?> lastPhase,
     });
 
@@ -2674,6 +3064,16 @@ class $$ScanMetaTableFilterComposer
 
   ColumnFilters<int> get similarGroupCount => $composableBuilder(
     column: $table.similarGroupCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get darkCount => $composableBuilder(
+    column: $table.darkCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get blurryCount => $composableBuilder(
+    column: $table.blurryCount,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -2717,6 +3117,16 @@ class $$ScanMetaTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get darkCount => $composableBuilder(
+    column: $table.darkCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get blurryCount => $composableBuilder(
+    column: $table.blurryCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get lastPhase => $composableBuilder(
     column: $table.lastPhase,
     builder: (column) => ColumnOrderings(column),
@@ -2752,6 +3162,14 @@ class $$ScanMetaTableAnnotationComposer
 
   GeneratedColumn<int> get similarGroupCount => $composableBuilder(
     column: $table.similarGroupCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get darkCount =>
+      $composableBuilder(column: $table.darkCount, builder: (column) => column);
+
+  GeneratedColumn<int> get blurryCount => $composableBuilder(
+    column: $table.blurryCount,
     builder: (column) => column,
   );
 
@@ -2795,6 +3213,8 @@ class $$ScanMetaTableTableManager
                 Value<int> photoCount = const Value.absent(),
                 Value<int> exactGroupCount = const Value.absent(),
                 Value<int> similarGroupCount = const Value.absent(),
+                Value<int> darkCount = const Value.absent(),
+                Value<int> blurryCount = const Value.absent(),
                 Value<String?> lastPhase = const Value.absent(),
               }) => ScanMetaCompanion(
                 id: id,
@@ -2802,6 +3222,8 @@ class $$ScanMetaTableTableManager
                 photoCount: photoCount,
                 exactGroupCount: exactGroupCount,
                 similarGroupCount: similarGroupCount,
+                darkCount: darkCount,
+                blurryCount: blurryCount,
                 lastPhase: lastPhase,
               ),
           createCompanionCallback:
@@ -2811,6 +3233,8 @@ class $$ScanMetaTableTableManager
                 Value<int> photoCount = const Value.absent(),
                 Value<int> exactGroupCount = const Value.absent(),
                 Value<int> similarGroupCount = const Value.absent(),
+                Value<int> darkCount = const Value.absent(),
+                Value<int> blurryCount = const Value.absent(),
                 Value<String?> lastPhase = const Value.absent(),
               }) => ScanMetaCompanion.insert(
                 id: id,
@@ -2818,6 +3242,8 @@ class $$ScanMetaTableTableManager
                 photoCount: photoCount,
                 exactGroupCount: exactGroupCount,
                 similarGroupCount: similarGroupCount,
+                darkCount: darkCount,
+                blurryCount: blurryCount,
                 lastPhase: lastPhase,
               ),
           withReferenceMapper: (p0) => p0

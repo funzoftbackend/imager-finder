@@ -16,6 +16,8 @@ class HomeTab extends ConsumerWidget {
     final meta = ref.watch(scanMetaProvider);
     final exact = ref.watch(exactGroupsProvider);
     final similar = ref.watch(similarGroupsProvider);
+    final darkAsync = ref.watch(darkPhotosProvider);
+    final blurryAsync = ref.watch(blurryPhotosProvider);
     final scanning = progress.phase != ScanPhase.idle &&
         progress.phase != ScanPhase.done &&
         progress.phase != ScanPhase.error;
@@ -34,6 +36,20 @@ class HomeTab extends ConsumerWidget {
       data: (g) => g,
       loading: () => const <SimilarGroupView>[],
       error: (_, _) => const <SimilarGroupView>[],
+    );
+    final darkPhotos = darkAsync.when(
+      skipLoadingOnReload: true,
+      skipLoadingOnRefresh: true,
+      data: (g) => g,
+      loading: () => const <Photo>[],
+      error: (_, _) => const <Photo>[],
+    );
+    final blurryPhotos = blurryAsync.when(
+      skipLoadingOnReload: true,
+      skipLoadingOnRefresh: true,
+      data: (g) => g,
+      loading: () => const <Photo>[],
+      error: (_, _) => const <Photo>[],
     );
     final photoCount = meta.when(
       skipLoadingOnReload: true,
@@ -64,6 +80,24 @@ class HomeTab extends ConsumerWidget {
       0,
       (sum, g) => sum + g.photos.length,
     );
+    final darkCount = darkPhotos.isNotEmpty
+        ? darkPhotos.length
+        : meta.when(
+            skipLoadingOnReload: true,
+            skipLoadingOnRefresh: true,
+            data: (m) => m?.darkCount ?? progress.darkCount,
+            loading: () => progress.darkCount,
+            error: (_, _) => progress.darkCount,
+          );
+    final blurryCount = blurryPhotos.isNotEmpty
+        ? blurryPhotos.length
+        : meta.when(
+            skipLoadingOnReload: true,
+            skipLoadingOnRefresh: true,
+            data: (m) => m?.blurryCount ?? progress.blurryCount,
+            loading: () => progress.blurryCount,
+            error: (_, _) => progress.blurryCount,
+          );
 
     return SafeArea(
       bottom: false,
@@ -112,42 +146,82 @@ class HomeTab extends ConsumerWidget {
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
-              child: Row(
+              child: Column(
                 children: [
-                  Expanded(
-                    child: _StatCard(
-                      title: 'Duplicates',
-                      count: exactPhotoCount,
-                      subtitle: exactGroupCount == 0
-                          ? 'Exact matches'
-                          : '$exactGroupCount groups',
-                      icon: Icons.copy_all_rounded,
-                      accent: const Color(0xFF7E57C2),
-                      onTap: () {
-                        ref
-                            .read(cleanCategoryProvider.notifier)
-                            .setCategory(CleanCategory.duplicates);
-                        ref.read(navIndexProvider.notifier).setIndex(1);
-                      },
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _StatCard(
+                          title: 'Duplicates',
+                          count: exactPhotoCount,
+                          subtitle: exactGroupCount == 0
+                              ? 'Exact matches'
+                              : '$exactGroupCount groups',
+                          icon: Icons.copy_all_rounded,
+                          accent: const Color(0xFF7E57C2),
+                          onTap: () {
+                            ref
+                                .read(cleanCategoryProvider.notifier)
+                                .setCategory(CleanCategory.duplicates);
+                            ref.read(navIndexProvider.notifier).setIndex(1);
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: _StatCard(
+                          title: 'Similar',
+                          count: similarPhotoCount,
+                          subtitle: similarGroupCount == 0
+                              ? 'Near matches'
+                              : '$similarGroupCount groups',
+                          icon: Icons.auto_awesome_rounded,
+                          accent: const Color(0xFF9575CD),
+                          onTap: () {
+                            ref
+                                .read(cleanCategoryProvider.notifier)
+                                .setCategory(CleanCategory.similar);
+                            ref.read(navIndexProvider.notifier).setIndex(1);
+                          },
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: _StatCard(
-                      title: 'Similar',
-                      count: similarPhotoCount,
-                      subtitle: similarGroupCount == 0
-                          ? 'Near matches'
-                          : '$similarGroupCount groups',
-                      icon: Icons.auto_awesome_rounded,
-                      accent: const Color(0xFF9575CD),
-                      onTap: () {
-                        ref
-                            .read(cleanCategoryProvider.notifier)
-                            .setCategory(CleanCategory.similar);
-                        ref.read(navIndexProvider.notifier).setIndex(1);
-                      },
-                    ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _StatCard(
+                          title: 'Dark',
+                          count: darkCount,
+                          subtitle: 'Too dim',
+                          icon: Icons.dark_mode_rounded,
+                          accent: const Color(0xFF5C6BC0),
+                          onTap: () {
+                            ref
+                                .read(cleanCategoryProvider.notifier)
+                                .setCategory(CleanCategory.dark);
+                            ref.read(navIndexProvider.notifier).setIndex(1);
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: _StatCard(
+                          title: 'Blurry',
+                          count: blurryCount,
+                          subtitle: 'Out of focus',
+                          icon: Icons.blur_on_rounded,
+                          accent: const Color(0xFF7986CB),
+                          onTap: () {
+                            ref
+                                .read(cleanCategoryProvider.notifier)
+                                .setCategory(CleanCategory.blurry);
+                            ref.read(navIndexProvider.notifier).setIndex(1);
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -283,7 +357,7 @@ class _HeroScanCard extends StatelessWidget {
                         : progress.message)
                     : hasScanned
                         ? '$photoCount photos indexed on this device'
-                        : 'Detect exact duplicates and similar photos locally — fast and private.',
+                        : 'Detect duplicates, similar, dark, and blurry photos locally — fast and private.',
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: Colors.white.withValues(alpha: 0.88),
                   height: 1.4,

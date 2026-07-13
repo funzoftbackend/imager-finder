@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 
 import '../../domain/models/models.dart';
+import '../../domain/scan/quality_metrics.dart';
 
 /// Client for the Android [HashEngine] / [ScanEngine] MethodChannel.
 class NativeHashClient {
@@ -34,25 +35,59 @@ class NativeHashClient {
     ];
   }
 
-  /// Parallel native dHash for many URIs (system thumbnails).
-  /// Returns map uri → dHash (missing entries failed).
-  Future<Map<String, String>> computeDHashBatch(List<String> uris) async {
+  /// Parallel native fingerprints: dHash + dark/blur scores.
+  /// Returns map uri → [PhotoFingerprint] (missing entries failed).
+  Future<Map<String, PhotoFingerprint>> computeDHashBatch(
+    List<String> uris,
+  ) async {
     if (uris.isEmpty) return const {};
     final raw = await _channel.invokeMethod<List<dynamic>>(
       'computeDHashBatch',
       {'uris': uris},
     );
     if (raw == null) return const {};
-    final out = <String, String>{};
+    final out = <String, PhotoFingerprint>{};
     for (final row in raw) {
-      if (row is! Map) continue;
-      final uri = row['uri'] as String?;
-      final dHash = row['dHash'] as String?;
-      if (uri != null && dHash != null && dHash.isNotEmpty) {
-        out[uri] = dHash;
-      }
+      final fp = _parseFingerprint(row);
+      if (fp != null) out[fp.$1] = fp.$2;
     }
     return out;
+  }
+
+  /// Single-URI fallback fingerprint (dHash + quality).
+  Future<PhotoFingerprint> analyzeImage(String uri) async {
+    final raw = await _channel.invokeMethod<dynamic>(
+      'analyzeImage',
+      {'uri': uri},
+    );
+    final parsed = _parseFingerprint(raw);
+    if (parsed == null) {
+      throw StateError('analyzeImage returned incomplete data for $uri');
+    }
+    return parsed.$2;
+  }
+
+  (String, PhotoFingerprint)? _parseFingerprint(dynamic row) {
+    if (row is! Map) return null;
+    final uri = row['uri'] as String?;
+    final dHash = row['dHash'] as String?;
+    final mean = (row['meanLuminance'] as num?)?.toDouble();
+    final blur = (row['blurScore'] as num?)?.toDouble();
+    if (uri == null ||
+        dHash == null ||
+        dHash.isEmpty ||
+        mean == null ||
+        blur == null) {
+      return null;
+    }
+    return (
+      uri,
+      PhotoFingerprint(
+        dHash: dHash,
+        meanLuminance: mean,
+        blurScore: blur,
+      ),
+    );
   }
 
   Future<String> computeContentHash(String uri) async {

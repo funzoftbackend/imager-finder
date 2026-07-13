@@ -42,6 +42,8 @@ class ScanProgress {
     this.photosPerSecond = 0,
     this.exactGroups = 0,
     this.similarGroups = 0,
+    this.darkCount = 0,
+    this.blurryCount = 0,
     this.error,
   });
 
@@ -52,6 +54,8 @@ class ScanProgress {
   final double photosPerSecond;
   final int exactGroups;
   final int similarGroups;
+  final int darkCount;
+  final int blurryCount;
   final String? error;
 
   double get fraction {
@@ -67,6 +71,8 @@ class ScanProgress {
     double? photosPerSecond,
     int? exactGroups,
     int? similarGroups,
+    int? darkCount,
+    int? blurryCount,
     String? error,
   }) {
     return ScanProgress(
@@ -77,6 +83,8 @@ class ScanProgress {
       photosPerSecond: photosPerSecond ?? this.photosPerSecond,
       exactGroups: exactGroups ?? this.exactGroups,
       similarGroups: similarGroups ?? this.similarGroups,
+      darkCount: darkCount ?? this.darkCount,
+      blurryCount: blurryCount ?? this.blurryCount,
       error: error,
     );
   }

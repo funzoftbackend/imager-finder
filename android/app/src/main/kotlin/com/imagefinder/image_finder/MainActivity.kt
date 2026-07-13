@@ -52,6 +52,23 @@ class MainActivity : FlutterActivity() {
                             }
                         }
                     }
+                    "analyzeImage" -> {
+                        val uri = call.argument<String>("uri")
+                        if (uri.isNullOrBlank()) {
+                            result.error("ARG", "uri is required", null)
+                            return@setMethodCallHandler
+                        }
+                        executor.execute {
+                            try {
+                                val row = scanEngine.fingerprintForUri(uri)
+                                runOnUiThread { result.success(row) }
+                            } catch (e: Exception) {
+                                runOnUiThread {
+                                    result.error("ANALYZE", e.message, null)
+                                }
+                            }
+                        }
+                    }
                     "computeContentHash" -> {
                         val uri = call.argument<String>("uri")
                         if (uri.isNullOrBlank()) {

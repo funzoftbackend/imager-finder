@@ -101,6 +101,77 @@ class HashEngine(private val context: Context) {
     /** Public entry for [ScanEngine] system-thumbnail path. */
     fun dHashFromBitmapPublic(bitmap: Bitmap): String = dHashFromBitmap(bitmap)
 
+    /**
+     * dHash + quality scores from one thumbnail decode.
+     * [meanLuminance] is 0–255; [blurScore] is Laplacian variance (higher = sharper).
+     */
+    fun fingerprintFromBitmap(bitmap: Bitmap): Fingerprint {
+        val dHash = dHashFromBitmap(bitmap)
+        val quality = qualityFromBitmap(bitmap)
+        return Fingerprint(dHash, quality.meanLuminance, quality.blurScore)
+    }
+
+    fun fingerprintFromUri(uriString: String): Fingerprint {
+        val bitmap = decodeSampled(uriString, 64, 64)
+            ?: throw IllegalStateException("Unable to decode uri: $uriString")
+        try {
+            return fingerprintFromBitmap(bitmap)
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    data class Fingerprint(
+        val dHash: String,
+        val meanLuminance: Double,
+        val blurScore: Double,
+    )
+
+    data class QualityScores(
+        val meanLuminance: Double,
+        val blurScore: Double,
+    )
+
+    /** Mean luma + Laplacian variance on a 64×64 gray plane. */
+    fun qualityFromBitmap(bitmap: Bitmap): QualityScores {
+        val size = 64
+        val scaled = Bitmap.createScaledBitmap(bitmap, size, size, true)
+        try {
+            val gray = DoubleArray(size * size)
+            var sum = 0.0
+            var i = 0
+            for (y in 0 until size) {
+                for (x in 0 until size) {
+                    val luma = luminance(scaled.getPixel(x, y))
+                    gray[i++] = luma
+                    sum += luma
+                }
+            }
+            val mean = sum / gray.size
+
+            // Laplacian kernel: center 4, orthogonal neighbors -1.
+            var lapSum = 0.0
+            var lapSq = 0.0
+            var count = 0
+            for (y in 1 until size - 1) {
+                for (x in 1 until size - 1) {
+                    val idx = y * size + x
+                    val lap = gray[idx - size] + gray[idx + size] +
+                        gray[idx - 1] + gray[idx + 1] -
+                        4.0 * gray[idx]
+                    lapSum += lap
+                    lapSq += lap * lap
+                    count++
+                }
+            }
+            val lapMean = if (count > 0) lapSum / count else 0.0
+            val variance = if (count > 0) (lapSq / count) - (lapMean * lapMean) else 0.0
+            return QualityScores(mean, variance.coerceAtLeast(0.0))
+        } finally {
+            if (scaled !== bitmap) scaled.recycle()
+        }
+    }
+
     private fun dHashFromBitmap(bitmap: Bitmap): String {
         val scaled = Bitmap.createScaledBitmap(bitmap, 9, 8, true)
         try {

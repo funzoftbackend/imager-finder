@@ -52,10 +52,17 @@ class ScanProgressNotifier extends Notifier<ScanProgress> {
 
 /// Reload groups/meta only when phase or persisted counts change —
 /// not on every similar hashing tick (that caused Duplicates card flicker).
-final _scanResultsReloadKeyProvider = Provider<(ScanPhase, int, int)>((ref) {
+final _scanResultsReloadKeyProvider =
+    Provider<(ScanPhase, int, int, int, int)>((ref) {
   return ref.watch(
     scanProgressProvider.select(
-      (p) => (p.phase, p.exactGroups, p.similarGroups),
+      (p) => (
+        p.phase,
+        p.exactGroups,
+        p.similarGroups,
+        p.darkCount,
+        p.blurryCount,
+      ),
     ),
   );
 });
@@ -69,6 +76,16 @@ final similarGroupsProvider =
     FutureProvider<List<SimilarGroupView>>((ref) async {
   ref.watch(_scanResultsReloadKeyProvider);
   return ref.read(appDatabaseProvider).getSimilarGroupViews();
+});
+
+final darkPhotosProvider = FutureProvider<List<Photo>>((ref) async {
+  ref.watch(_scanResultsReloadKeyProvider);
+  return ref.read(appDatabaseProvider).getDarkPhotos();
+});
+
+final blurryPhotosProvider = FutureProvider<List<Photo>>((ref) async {
+  ref.watch(_scanResultsReloadKeyProvider);
+  return ref.read(appDatabaseProvider).getBlurryPhotos();
 });
 
 final scanMetaProvider = FutureProvider<ScanMetaData?>((ref) async {
@@ -88,7 +105,7 @@ class NavIndexNotifier extends Notifier<int> {
   void setIndex(int index) => state = index;
 }
 
-enum CleanCategory { duplicates, similar }
+enum CleanCategory { duplicates, similar, dark, blurry }
 
 final cleanCategoryProvider =
     NotifierProvider<CleanCategoryNotifier, CleanCategory>(
@@ -123,6 +140,11 @@ class CleanSelectionNotifier extends Notifier<Set<String>> {
       for (final id in mediaIds)
         if (id != keepId) id,
     };
+  }
+
+  /// Select every photo (used for dark / blurry lists).
+  void selectAll(Iterable<String> mediaIds) {
+    state = {for (final id in mediaIds) id};
   }
 
   /// For every group: keep the best photo (largest file), select the rest.

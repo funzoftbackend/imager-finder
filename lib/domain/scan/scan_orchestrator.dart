@@ -12,6 +12,7 @@ import '../models/models.dart';
 import 'diff_engine.dart';
 import 'groupers.dart';
 import 'bk_tree.dart';
+import 'quality_metrics.dart';
 import 'scan_timing.dart';
 
 /// Isolate entry must not close over [ScanOrchestrator.run]'s locals
@@ -139,6 +140,18 @@ class ScanOrchestrator {
           pHash: modifiedIds.contains(a.mediaId)
               ? const Value(null)
               : const Value.absent(),
+          meanLuminance: modifiedIds.contains(a.mediaId)
+              ? const Value(null)
+              : const Value.absent(),
+          blurScore: modifiedIds.contains(a.mediaId)
+              ? const Value(null)
+              : const Value.absent(),
+          isDark: modifiedIds.contains(a.mediaId)
+              ? const Value(null)
+              : const Value.absent(),
+          isBlurry: modifiedIds.contains(a.mediaId)
+              ? const Value(null)
+              : const Value.absent(),
           indexedAtMs: Value(now),
         ),
     ];
@@ -232,23 +245,28 @@ class ScanOrchestrator {
       message: 'Found ${exactGroups.length} exact duplicate groups',
     );
 
-    // —— Phase 4: Similar via native thumbnail dHash batch ——
+    // —— Phase 4: Similar + dark/blur via native thumbnail fingerprint batch ——
     timing.begin('similar_hash');
     allPhotos = await _db.getAllPhotos();
-    final needDHash = forceFullSimilar
+    final needFingerprint = forceFullSimilar
         ? allPhotos
         : allPhotos
-            .where((p) => p.dHash == null || p.dHash!.isEmpty)
+            .where(
+              (p) =>
+                  p.dHash == null ||
+                  p.dHash!.isEmpty ||
+                  p.meanLuminance == null,
+            )
             .toList();
 
     yield ScanProgress(
       phase: ScanPhase.similar,
       processed: 0,
-      total: needDHash.length,
+      total: needFingerprint.length,
       exactGroups: exactGroups.length,
-      message: needDHash.isEmpty
+      message: needFingerprint.isEmpty
           ? 'Similar fingerprints up to date'
-          : 'Scanning similar photos…',
+          : 'Scanning similar, dark & blurry…',
     );
 
     final similarStarted = DateTime.now();
@@ -259,15 +277,15 @@ class ScanOrchestrator {
     const milestoneEvery = 500;
     var nextMilestone = milestoneEvery;
 
-    for (var i = 0; i < needDHash.length; i += chunkSize) {
+    for (var i = 0; i < needFingerprint.length; i += chunkSize) {
       if (_cancelRequested) return;
-      final chunk = needDHash.sublist(
+      final chunk = needFingerprint.sublist(
         i,
-        min(i + chunkSize, needDHash.length),
+        min(i + chunkSize, needFingerprint.length),
       );
       final uris = [for (final p in chunk) p.uri];
 
-      Map<String, String> byUri;
+      Map<String, PhotoFingerprint> byUri;
       try {
         byUri = await _hash.computeDHashBatch(uris);
       } catch (e) {
@@ -275,17 +293,17 @@ class ScanOrchestrator {
         byUri = const {};
       }
 
-      final chunkResults = <({String mediaId, String dHash})>[];
+      final chunkResults = <({String mediaId, PhotoFingerprint fp})>[];
       for (final photo in chunk) {
         final hashed = byUri[photo.uri];
-        if (hashed != null && hashed.isNotEmpty) {
-          chunkResults.add((mediaId: photo.mediaId, dHash: hashed));
+        if (hashed != null) {
+          chunkResults.add((mediaId: photo.mediaId, fp: hashed));
           continue;
         }
-        // Rare fallback: single native decode.
+        // Rare fallback: single native decode + quality.
         try {
-          final dHash = await _hash.computeDHash(photo.uri);
-          chunkResults.add((mediaId: photo.mediaId, dHash: dHash));
+          final fp = await _hash.analyzeImage(photo.uri);
+          chunkResults.add((mediaId: photo.mediaId, fp: fp));
         } catch (e) {
           similarFailed++;
           lastError ??= e.toString();
@@ -295,16 +313,25 @@ class ScanOrchestrator {
       if (chunkResults.isNotEmpty) {
         await _db.transaction(() async {
           for (final item in chunkResults) {
-            await _db.updateHashes(mediaId: item.mediaId, dHash: item.dHash);
+            final fp = item.fp;
+            await _db.updateHashes(
+              mediaId: item.mediaId,
+              dHash: fp.dHash,
+              meanLuminance: fp.meanLuminance,
+              blurScore: fp.blurScore,
+              isDark: fp.isDark,
+              isBlurry: fp.isBlurry,
+            );
           }
         });
       }
 
       similarDone += chunk.length;
-      if (similarDone >= nextMilestone || similarDone >= needDHash.length) {
+      if (similarDone >= nextMilestone ||
+          similarDone >= needFingerprint.length) {
         timing.milestone(
           'similar_hash',
-          '$similarDone/${needDHash.length} failed=$similarFailed '
+          '$similarDone/${needFingerprint.length} failed=$similarFailed '
           'rate=${_rate(similarStarted, (similarDone - similarFailed).clamp(0, similarDone)).toStringAsFixed(1)}/s',
         );
         nextMilestone += milestoneEvery;
@@ -313,11 +340,11 @@ class ScanOrchestrator {
       yield ScanProgress(
         phase: ScanPhase.similar,
         processed: similarDone,
-        total: needDHash.isEmpty ? 1 : needDHash.length,
+        total: needFingerprint.isEmpty ? 1 : needFingerprint.length,
         exactGroups: exactGroups.length,
         message: similarFailed > 0
-            ? 'Scanning similar photos… ($similarFailed failed)'
-            : 'Scanning similar photos…',
+            ? 'Scanning similar, dark & blurry… ($similarFailed failed)'
+            : 'Scanning similar, dark & blurry…',
         photosPerSecond: _rate(
           similarStarted,
           (similarDone - similarFailed).clamp(0, similarDone),
@@ -328,7 +355,7 @@ class ScanOrchestrator {
     timing.end(
       'similar_hash',
       detail:
-          'photos=${needDHash.length} failed=$similarFailed '
+          'photos=${needFingerprint.length} failed=$similarFailed '
           'rate=${_rate(similarStarted, (similarDone - similarFailed).clamp(0, similarDone)).toStringAsFixed(1)}/s',
     );
 
@@ -395,7 +422,9 @@ class ScanOrchestrator {
     }
     timing.end(
       'similar_group',
-      detail: 'fingerprints=${mediaIds.length} groups=${similarGroups.length}',
+      detail:
+          'fingerprints=${mediaIds.length} groups=${similarGroups.length} '
+          'photos=${similarGroups.fold<int>(0, (s, g) => s + g.mediaIds.length)}',
     );
 
     await Future<void>.delayed(Duration.zero);
@@ -412,21 +441,31 @@ class ScanOrchestrator {
     await Future<void>.delayed(Duration.zero);
 
     await _db.replaceSimilarGroups(similarGroups);
+
+    final darkCount =
+        allPhotos.where((p) => p.isDark == true).length;
+    final blurryCount =
+        allPhotos.where((p) => p.isBlurry == true).length;
+
     await _db.upsertScanMeta(
       photoCount: allPhotos.length,
       exactGroupCount: exactGroups.length,
       similarGroupCount: similarGroups.length,
+      darkCount: darkCount,
+      blurryCount: blurryCount,
       lastPhase: 'done',
     );
     timing.end(
       'persist',
       detail:
-          'exactGroups=${exactGroups.length} similarGroups=${similarGroups.length}',
+          'exactGroups=${exactGroups.length} similarGroups=${similarGroups.length} '
+          'dark=$darkCount blurry=$blurryCount',
     );
 
     timing.summary(
       'SCAN COMPLETE photos=${allPhotos.length} '
-      'exact=${exactGroups.length} similar=${similarGroups.length}',
+      'exact=${exactGroups.length} similar=${similarGroups.length} '
+      'dark=$darkCount blurry=$blurryCount',
     );
 
     yield ScanProgress(
@@ -435,9 +474,12 @@ class ScanOrchestrator {
       total: allPhotos.length,
       exactGroups: exactGroups.length,
       similarGroups: similarGroups.length,
+      darkCount: darkCount,
+      blurryCount: blurryCount,
       message:
           'Scan complete · ${allPhotos.length} photos · '
-          '${exactGroups.length} exact · ${similarGroups.length} similar',
+          '${exactGroups.length} exact · ${similarGroups.length} similar · '
+          '$darkCount dark · $blurryCount blurry',
       photosPerSecond: _rate(started, allPhotos.length),
     );
   }
